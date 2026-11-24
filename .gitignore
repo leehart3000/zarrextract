@@ -1,1 +1,14 @@
 dist/
+build/
+*.egg-info/
+__pycache__/
+.venv/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+test-results/
+.scratch/
+docs/_build/
+.DS_Store
+.env*
+!.env.example
