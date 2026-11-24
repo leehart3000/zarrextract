@@ -9,7 +9,7 @@ readme = "README.md"
 license = "BSD-3-Clause"
 license-files = ["LICENSE"]
 requires-python = ">=3.12"
-keywords = ["zarr", "arrow", "pyarrow", "netcdf", "climate", "geoscience", "time-series"]
+keywords = ["zarr", "arrow", "pyarrow", "parquet", "subsetting", "extraction", "time-series"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Science/Research",
@@ -19,8 +19,6 @@ classifiers = [
     "Programming Language :: Python :: 3.13",
     "Programming Language :: Python :: 3.14",
     "Topic :: Scientific/Engineering",
-    "Topic :: Scientific/Engineering :: Atmospheric Science",
-    "Topic :: Scientific/Engineering :: GIS",
     "Typing :: Typed",
 ]
 dependencies = ["zarr (>=3,<4)", "pyarrow (>=18)", "numpy (>=2)"]
