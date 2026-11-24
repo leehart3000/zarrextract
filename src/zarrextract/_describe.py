@@ -1,6 +1,7 @@
 """Describe the arrays in a Zarr store."""
 
 import os
+from collections.abc import Iterator
 from dataclasses import dataclass
 
 from zarrextract._errors import VariableNotFoundError
@@ -36,6 +37,15 @@ class StoreDescription:
     def data_variables(self) -> tuple[ArrayInfo, ...]:
         """Every array that is not a coordinate."""
         return tuple(a for a in self.arrays if not a.is_coordinate)
+
+    def __iter__(self) -> Iterator[ArrayInfo]:
+        return iter(self.arrays)
+
+    def __len__(self) -> int:
+        return len(self.arrays)
+
+    def __contains__(self, name: object) -> bool:
+        return any(info.name == name for info in self.arrays)
 
     def __getitem__(self, name: str) -> ArrayInfo:
         for info in self.arrays:

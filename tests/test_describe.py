@@ -104,6 +104,20 @@ def test_coordinate_must_be_named_after_its_own_dimension(
 
 
 @pytest.mark.parametrize("zarr_format", FORMATS)
+def test_describe_zero_dimensional_array(
+    tmp_path: Path, zarr_format: ZarrFormat
+) -> None:
+    group = zarr.open_group(tmp_path / "s.zarr", mode="w", zarr_format=zarr_format)
+    write_array(group, "scalar", 1.0, ())
+
+    info = describe(tmp_path / "s.zarr")["scalar"]
+
+    assert info.dimensions == ()
+    assert info.shape == ()
+    assert not info.is_coordinate
+
+
+@pytest.mark.parametrize("zarr_format", FORMATS)
 def test_describe_ignores_nested_groups(
     tmp_path: Path, zarr_format: ZarrFormat
 ) -> None:
@@ -121,6 +135,29 @@ def test_results_are_frozen(tmp_path: Path) -> None:
         result.arrays = ()  # type: ignore[misc]
     with pytest.raises(dataclasses.FrozenInstanceError):
         result["temp"].name = "x"  # type: ignore[misc]
+
+
+def test_description_is_a_collection_of_arrays(tmp_path: Path) -> None:
+    result = describe(make_store(tmp_path / "s.zarr", 3))
+
+    assert [info.name for info in result] == ["lat", "lon", "temp", "time"]
+    assert all(isinstance(info, ArrayInfo) for info in result)
+    assert list(result) == list(result.arrays)
+    assert len(result) == 4
+    assert "temp" in result
+    assert "nope" not in result
+    assert 0 not in result
+    assert result["temp"] not in result  # membership is by name, not by value
+
+
+def test_empty_description_is_falsy(tmp_path: Path) -> None:
+    zarr.open_group(tmp_path / "s.zarr", mode="w", zarr_format=3)
+
+    result = describe(tmp_path / "s.zarr")
+
+    assert len(result) == 0
+    assert not result
+    assert list(result) == []
 
 
 def test_getitem_unknown_name(tmp_path: Path) -> None:

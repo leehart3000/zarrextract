@@ -15,6 +15,7 @@ from zarrextract._errors import (
     VariableNotFoundError,
     ZarrExtractError,
 )
+from zarrextract._extract import extract
 
 __version__ = version("zarrextract")
 
@@ -33,4 +34,5 @@ __all__ = [
     "ZarrExtractError",
     "__version__",
     "describe",
+    "extract",
 ]

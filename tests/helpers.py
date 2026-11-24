@@ -37,6 +37,49 @@ def write_array(
         array.attrs.update(attrs)
 
 
+def make_grid(
+    path: Path,
+    zarr_format: ZarrFormat,
+    *,
+    time: npt.ArrayLike = (0, 1, 2, 3),
+    time_attrs: dict[str, Any] | None = None,
+    lat: npt.ArrayLike = (90.0, 45.0, 0.0, -45.0, -90.0),
+    lon: npt.ArrayLike = (0.0, 90.0, 180.0, 270.0),
+    data: npt.ArrayLike | None = None,
+    data_attrs: dict[str, Any] | None = None,
+    chunks: tuple[int, int, int] = (1, 2, 2),
+) -> Path:
+    """Write a (time, lat, lon) grid with a variable called ``temp``.
+
+    By default ``temp[t, y, x]`` is ``100 * t + 10 * y + x`` (indices, not
+    coordinate values), which makes expected values easy to work out.
+    """
+    time_values = np.asarray(time)
+    lat_values = np.asarray(lat)
+    lon_values = np.asarray(lon)
+    if data is None:
+        t = np.arange(time_values.size)[:, None, None]
+        y = np.arange(lat_values.size)[None, :, None]
+        x = np.arange(lon_values.size)[None, None, :]
+        data = (100 * t + 10 * y + x).astype("f8")
+    group = zarr.open_group(path, mode="w", zarr_format=zarr_format)
+    write_array(
+        group,
+        "time",
+        time_values,
+        ("time",),
+        attrs=time_attrs
+        if time_attrs is not None
+        else {"units": "days since 2000-01-01"},
+    )
+    write_array(group, "lat", lat_values, ("lat",), attrs={"units": "degrees_north"})
+    write_array(group, "lon", lon_values, ("lon",), attrs={"units": "degrees_east"})
+    write_array(
+        group, "temp", data, ("time", "lat", "lon"), chunks=chunks, attrs=data_attrs
+    )
+    return path
+
+
 def make_store(
     path: Path,
     zarr_format: ZarrFormat,

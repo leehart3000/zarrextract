@@ -5,7 +5,6 @@ from typing import Any
 
 import zarr
 import zarr.errors
-from zarr.core.metadata import ArrayV2Metadata, ArrayV3Metadata
 
 from zarrextract._errors import StoreOpenError
 
@@ -34,11 +33,14 @@ def dimension_names(array: zarr.Array[Any]) -> tuple[str, ...] | None:
     Zarr v3 stores them in ``dimension_names``. Zarr v2 stores them in the
     ``_ARRAY_DIMENSIONS`` attribute.
     """
+    if array.ndim == 0:
+        # Zarr v3 stores no names for a 0-d array, but it trivially has none to name.
+        return ()
     metadata = array.metadata
     names: object
-    if isinstance(metadata, ArrayV3Metadata):
+    if metadata.zarr_format == 3:
         names = metadata.dimension_names
-    elif isinstance(metadata, ArrayV2Metadata):
+    elif metadata.zarr_format == 2:
         names = array.attrs.get("_ARRAY_DIMENSIONS")
     else:  # pragma: no cover - only reachable if zarr adds a new format
         return None
