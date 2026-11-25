@@ -24,12 +24,31 @@ variables:
   PIP_DISABLE_PIP_VERSION_CHECK: "1"
   PIP_ROOT_USER_ACTION: "ignore"
   PYTHON_KEYRING_BACKEND: "keyring.backends.null.Keyring"
+  # Downloads are cached between jobs (see .poetry).
+  PIP_CACHE_DIR: "$CI_PROJECT_DIR/.cache/pip"
+  POETRY_CACHE_DIR: "$CI_PROJECT_DIR/.cache/pypoetry"
 
 .release-tag: &release-tag
   if: $CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+$/
 
+# Compute minutes are limited, so ordinary pushes test one Python version.
+# Tags, scheduled and manually started pipelines test all of them.
+.all-versions: &all-versions
+  - if: $CI_COMMIT_TAG
+  - if: $CI_PIPELINE_SOURCE == "schedule"
+  - if: $CI_PIPELINE_SOURCE == "web"
+
 .poetry:
   image: python:3.13-slim-trixie
+  cache:
+    key:
+      files:
+        - poetry.lock
+      prefix: "${CI_JOB_NAME_SLUG}"
+    paths:
+      - .cache/pip
+      - .cache/pypoetry/cache
+      - .cache/pypoetry/artifacts
   before_script:
     - python -m pip install "poetry==${POETRY_VERSION}"
     - poetry install --no-interaction
@@ -46,10 +65,17 @@ lint:
 test:
   extends: .poetry
   stage: test
+  script:
+    - poetry run pytest
+
+test-other-versions:
+  extends: .poetry
+  stage: test
   image: python:${PY}-slim-trixie
   parallel:
     matrix:
-      - PY: ["3.12", "3.13", "3.14"]
+      - PY: ["3.12", "3.14"]
+  rules: *all-versions
   script:
     - poetry run pytest
 
@@ -94,6 +120,7 @@ pypi:
   needs:
     - job: lint
     - job: test
+    - job: test-other-versions
     - job: attest
       artifacts: true
   rules:
