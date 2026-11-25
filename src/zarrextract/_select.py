@@ -1,6 +1,7 @@
 """Turn selections on a dimension into a contiguous index range."""
 
 import re
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from typing import Any
@@ -13,6 +14,7 @@ from zarrextract._errors import (
     EmptySelectionError,
     SelectionError,
 )
+from zarrextract._probe import LazyAxis, not_monotonic_error
 
 Scalar = int | float | np.number[Any] | str | date | np.datetime64
 """A single coordinate value: a number, an ISO string, a date or a datetime64."""
@@ -37,13 +39,28 @@ class Axis:
     is_time: bool = False
     is_longitude: bool = False
 
+    @property
+    def dtype(self) -> np.dtype[Any]:
+        return self.values.dtype
 
-def select(axis: Axis, selection: Selection) -> slice:
+    @property
+    def size(self) -> int:
+        return len(self.values)
+
+    def read(self, selected: slice) -> NDArray[Any]:
+        """Return the decoded values in a slice."""
+        return self.values[selected]
+
+
+def select(axis: Axis | LazyAxis, selection: Selection) -> slice:
     """Return the slice of ``axis`` picked by ``selection``.
 
     A scalar picks the nearest coordinate value, as a slice of length 1. A
     ``(start, stop)`` pair picks every value from start to stop, inclusive.
+    A ``LazyAxis`` is searched by bisection and gives the same answer.
     """
+    if isinstance(axis, LazyAxis):
+        return _select_lazy(axis, selection)
     coords = _numeric(axis)
     if coords.size == 0:
         raise EmptySelectionError(f"Dimension {axis.name!r} has no values.")
@@ -84,10 +101,7 @@ def _direction(name: str, coords: NDArray[Any]) -> bool:
         return True
     if (steps < 0).all():
         return False
-    raise SelectionError(
-        f"Cannot select on dimension {name!r}: its coordinate values are not "
-        "strictly increasing or decreasing."
-    )
+    raise not_monotonic_error(name)
 
 
 def _parse_iso(text: str) -> np.datetime64:
@@ -106,7 +120,7 @@ def _parse_iso(text: str) -> np.datetime64:
         raise SelectionError(f"Cannot read {text!r} as a date or time: {exc}") from exc
 
 
-def _to_ticks(axis: Axis, value: object) -> int:
+def _to_ticks(axis: Axis | LazyAxis, value: object) -> int:
     """Convert a time selection to integer ticks in the axis resolution."""
     moment: np.datetime64
     if isinstance(value, np.datetime64):
@@ -126,11 +140,11 @@ def _to_ticks(axis: Axis, value: object) -> int:
         )
     if np.isnat(moment):
         raise SelectionError(f"The selection for {axis.name!r} is not a valid time.")
-    unit, _ = np.datetime_data(axis.values.dtype)
+    unit, _ = np.datetime_data(axis.dtype)
     return int(moment.astype(f"datetime64[{unit}]").astype(np.int64))
 
 
-def _to_number(axis: Axis, value: object) -> float:
+def _to_number(axis: Axis | LazyAxis, value: object) -> float:
     if axis.is_time:
         return _to_ticks(axis, value)
     if isinstance(value, bool) or not isinstance(value, int | float | np.number):
@@ -146,14 +160,14 @@ def _tolerance(coords: NDArray[Any]) -> float:
     return _TOLERANCE * float(np.median(np.abs(np.diff(coords))))
 
 
-def _to_store_lon(coords: NDArray[Any], value: float) -> float:
+def _to_store_lon(highest: Any, value: float) -> float:
     """Map a longitude to the convention of the store (0..360 or -180..180)."""
-    if float(coords.max()) > 180:
+    if float(highest) > 180:
         return value if 0 <= value <= 360 else value % 360
     return value if -180 <= value <= 180 else (value + 180) % 360 - 180
 
 
-def _numeric_longitude(axis: Axis) -> bool:
+def _numeric_longitude(axis: Axis | LazyAxis) -> bool:
     return axis.is_longitude and not axis.is_time
 
 
@@ -162,7 +176,8 @@ def _select_range(axis: Axis, coords: NDArray[Any], start: float, stop: float) -
         if stop - start >= 360:
             return slice(0, coords.size)
         raw = (start, stop)
-        start, stop = _to_store_lon(coords, start), _to_store_lon(coords, stop)
+        highest = coords.max()
+        start, stop = _to_store_lon(highest, start), _to_store_lon(highest, stop)
         if start > stop:
             raise AntimeridianError(
                 f"The longitude range {raw[0]} to {raw[1]} wraps around the edge "
@@ -189,7 +204,7 @@ def _select_nearest(
 ) -> slice:
     longitude = _numeric_longitude(axis)
     if longitude:
-        value = _to_store_lon(coords, value)
+        value = _to_store_lon(coords.max(), value)
     low, high = coords.min(), coords.max()
 
     if coords.size == 1:
@@ -221,7 +236,7 @@ def _select_nearest(
 
 
 def _outside(
-    axis: Axis, value: float, low: Any, high: Any, step: Any
+    axis: Axis | LazyAxis, value: float, low: Any, high: Any, step: Any
 ) -> SelectionError:
     step_text = f"{int(step)} {_time_unit(axis)}" if axis.is_time else str(step)
     return SelectionError(
@@ -231,13 +246,141 @@ def _outside(
     )
 
 
-def _time_unit(axis: Axis) -> str:
-    return np.datetime_data(axis.values.dtype)[0]
+def _time_unit(axis: Axis | LazyAxis) -> str:
+    return np.datetime_data(axis.dtype)[0]
 
 
-def _show(axis: Axis, value: Any) -> str:
+def _show(axis: Axis | LazyAxis, value: Any) -> str:
     """Format a coordinate value for an error message."""
     if axis.is_time:
         ticks = np.array(int(value), dtype=np.int64)
         return str(ticks.astype(f"datetime64[{_time_unit(axis)}]"))
     return str(value)
+
+
+# --- selection by bisection ---------------------------------------------------
+# These mirror the whole-read functions above, but look at single values of a
+# LazyAxis. Keep the two in step: the tests compare their answers.
+
+
+def _first_true(test: Callable[[int], bool], low: int, high: int) -> int:
+    """Return the first index in ``low..high`` where ``test`` is true.
+
+    ``test`` must be false and then true along the axis. ``high`` is returned
+    if it is never true.
+    """
+    while low < high:
+        middle = (low + high) // 2
+        if test(middle):
+            high = middle
+        else:
+            low = middle + 1
+    return low
+
+
+def _select_lazy(axis: LazyAxis, selection: Selection) -> slice:
+    last = axis.size - 1
+    first, second = axis.value(0), axis.value(1)
+    before_last, end = axis.value(last - 1), axis.value(last)
+    if first < second and before_last < end and first < end:
+        increasing = True
+    elif first > second and before_last > end and first > end:
+        increasing = False
+    else:
+        raise not_monotonic_error(axis.name)
+    low, high = (first, end) if increasing else (end, first)
+    step_at_start, step_at_end = abs(second - first), abs(end - before_last)
+
+    if isinstance(selection, tuple | list):
+        if len(selection) != 2:
+            raise SelectionError(
+                f"The selection for {axis.name!r} must be a single value or a "
+                f"(start, stop) pair, not {len(selection)} values."
+            )
+        start, stop = (_to_number(axis, v) for v in selection)
+        tolerance = (
+            _TOLERANCE * float(min(step_at_start, step_at_end))
+            if low.dtype.kind == "f"
+            else 0.0
+        )
+        return _bisect_range(axis, increasing, low, high, tolerance, start, stop)
+    value = _to_number(axis, selection)
+    steps = (step_at_start, step_at_end) if increasing else (step_at_end, step_at_start)
+    return _bisect_nearest(axis, increasing, low, high, steps, value)
+
+
+def _bisect_range(
+    axis: LazyAxis,
+    increasing: bool,
+    low: Any,
+    high: Any,
+    tolerance: float,
+    start: float,
+    stop: float,
+) -> slice:
+    if _numeric_longitude(axis):
+        if stop - start >= 360:
+            return slice(0, axis.size)
+        raw = (start, stop)
+        start, stop = _to_store_lon(high, start), _to_store_lon(high, stop)
+        if start > stop:
+            raise AntimeridianError(
+                f"The longitude range {raw[0]} to {raw[1]} wraps around the edge "
+                f"of the store's longitude axis ({low} to {high}), "
+                "so it cannot be read as one block. Request the two parts "
+                "separately."
+            )
+    else:
+        start, stop = min(start, stop), max(start, stop)
+
+    bottom, top = start - tolerance, stop + tolerance
+    if increasing:
+        begin = _first_true(lambda i: axis.value(i) >= bottom, 0, axis.size)
+        end = _first_true(lambda i: axis.value(i) > top, begin, axis.size)
+    else:
+        begin = _first_true(lambda i: axis.value(i) <= top, 0, axis.size)
+        end = _first_true(lambda i: axis.value(i) < bottom, begin, axis.size)
+    if begin >= end:
+        raise EmptySelectionError(
+            f"No values of {axis.name!r} lie between {_show(axis, start)} and "
+            f"{_show(axis, stop)}. The values run from {_show(axis, low)} "
+            f"to {_show(axis, high)}."
+        )
+    return slice(begin, end)
+
+
+def _bisect_nearest(
+    axis: LazyAxis,
+    increasing: bool,
+    low: Any,
+    high: Any,
+    steps: tuple[Any, Any],
+    value: float,
+) -> slice:
+    longitude = _numeric_longitude(axis)
+    if longitude:
+        value = _to_store_lon(high, value)
+    step_low, step_high = steps
+
+    wraps = longitude and high - low + step_high >= 360 * (1 - _TOLERANCE)
+    if not wraps:
+        if value < low and low - value > step_low * (1 + _TOLERANCE):
+            raise _outside(axis, value, low, high, step_low)
+        if value > high and value - high > step_high * (1 + _TOLERANCE):
+            raise _outside(axis, value, low, high, step_high)
+
+    def distance(i: int) -> Any:
+        if wraps:
+            return np.abs((axis.value(i) - value + 180.0) % 360.0 - 180.0)
+        return np.abs(axis.value(i) - value)
+
+    if increasing:
+        after = _first_true(lambda i: axis.value(i) >= value, 0, axis.size)
+    else:
+        after = _first_true(lambda i: axis.value(i) <= value, 0, axis.size)
+    candidates = {max(after - 1, 0), min(after, axis.size - 1)}
+    if wraps:
+        candidates |= {0, axis.size - 1}
+    # Lowest index wins a tie, as with argmin on the whole coordinate.
+    nearest = min(sorted(candidates), key=distance)
+    return slice(nearest, nearest + 1)

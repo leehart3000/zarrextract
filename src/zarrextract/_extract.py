@@ -17,8 +17,12 @@ from zarrextract._errors import (
     VariableNotFoundError,
     ZarrExtractError,
 )
+from zarrextract._probe import LazyAxis
 from zarrextract._select import Axis, Selection, select
 from zarrextract._store import dimension_names, open_group
+
+BISECT_MIN_CHUNKS = 8
+"""Selected coordinates with more chunks than this are searched by bisection."""
 
 
 def extract(
@@ -51,7 +55,9 @@ def extract(
     gregorian or proleptic_gregorian calendar) become Arrow timestamps whose
     unit is ``s``, ``ms`` or ``us`` to match the time units. ``scale_factor``
     and ``add_offset`` are applied, and ``_FillValue`` and ``missing_value``
-    become nulls. Only the chunks that overlap the selection are read.
+    become nulls. Only the chunks that overlap the selection are read. A
+    selected coordinate with more than 8 chunks is searched by bisection, which
+    reads about one chunk per halving instead of the whole coordinate.
 
     ``storage_options`` is not a selection. It is passed to the fsspec backend,
     for example ``{"anon": True}`` to read a public S3 bucket without
@@ -83,8 +89,14 @@ def _find_array(group: zarr.Group, variable: str) -> "zarr.Array[Any]":
     return node
 
 
-def _read_axis(group: zarr.Group, dim: str, length: int) -> Axis:
-    """Read the whole coordinate for a dimension, or use its index if it has none."""
+def _read_axis(
+    group: zarr.Group, dim: str, length: int, *, selected: bool = False
+) -> Axis | LazyAxis:
+    """Read the coordinate for a dimension, or use its index if it has none.
+
+    A selected coordinate with more than ``BISECT_MIN_CHUNKS`` chunks is not read
+    here. It comes back as a ``LazyAxis`` that is searched by bisection.
+    """
     try:
         node = group[dim]
     except KeyError:
@@ -94,9 +106,26 @@ def _read_axis(group: zarr.Group, dim: str, length: int) -> Axis:
         and node.shape == (length,)
         and dimension_names(node) in (None, (dim,))
     ):
-        values = np.asarray(node[...])
         attrs = dict(node.attrs)
         units = attrs.get("units")
+        kind = node.dtype.kind
+        if (
+            selected
+            and kind in "iufM"
+            and -(-length // node.chunks[0]) > BISECT_MIN_CHUNKS
+        ):
+            time_units = kind != "M" and is_time_units(units)
+            return LazyAxis(
+                node,
+                dim,
+                units=units if time_units and isinstance(units, str) else None,
+                calendar=attrs.get("calendar"),
+                is_time=kind == "M" or time_units,
+                is_longitude=kind != "M"
+                and not time_units
+                and is_longitude(dim, attrs),
+            )
+        values = np.asarray(node[...])
         if values.dtype.kind == "M":
             return Axis(dim, values, is_time=True)
         if is_time_units(units):
@@ -141,13 +170,13 @@ def _extract_from_group(
         )
 
     axes = [
-        _read_axis(group, dim, length)
+        _read_axis(group, dim, length, selected=dim in selections)
         for dim, length in zip(dims, array.shape, strict=True)
     ]
     slices = [
         select(axis, selections[axis.name])
         if axis.name in selections
-        else slice(0, len(axis.values))
+        else slice(0, axis.size)
         for axis in axes
     ]
     sizes = [s.stop - s.start for s in slices]
@@ -158,7 +187,7 @@ def _extract_from_group(
 
     columns = [
         _column(
-            axis.values[sl],
+            axis.read(sl),
             inner=math.prod(sizes[k + 1 :]),
             outer=math.prod(sizes[:k]),
         )
