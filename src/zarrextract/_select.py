@@ -1,5 +1,6 @@
 """Turn selections on a dimension into a contiguous index range."""
 
+import math
 import re
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -9,11 +10,7 @@ from typing import Any
 import numpy as np
 from numpy.typing import NDArray
 
-from zarrextract._errors import (
-    AntimeridianError,
-    EmptySelectionError,
-    SelectionError,
-)
+from zarrextract._errors import EmptySelectionError, SelectionError
 from zarrextract._probe import LazyAxis, not_monotonic_error
 
 Scalar = int | float | np.number[Any] | str | date | np.datetime64
@@ -52,11 +49,17 @@ class Axis:
         return self.values[selected]
 
 
-def select(axis: Axis | LazyAxis, selection: Selection) -> slice:
+Indices = slice | tuple[slice, slice]
+"""One slice, or two for a longitude range that wraps around the seam."""
+
+
+def select(axis: Axis | LazyAxis, selection: Selection) -> Indices:
     """Return the slice of ``axis`` picked by ``selection``.
 
     A scalar picks the nearest coordinate value, as a slice of length 1. A
     ``(start, stop)`` pair picks every value from start to stop, inclusive.
+    A longitude range that wraps around the edge of the axis gives two slices:
+    first the one holding ``start``, then the one holding ``stop``.
     A ``LazyAxis`` is searched by bisection and gives the same answer.
     """
     if isinstance(axis, LazyAxis):
@@ -171,32 +174,46 @@ def _numeric_longitude(axis: Axis | LazyAxis) -> bool:
     return axis.is_longitude and not axis.is_time
 
 
-def _select_range(axis: Axis, coords: NDArray[Any], start: float, stop: float) -> slice:
+def _select_range(
+    axis: Axis, coords: NDArray[Any], start: float, stop: float
+) -> Indices:
     if _numeric_longitude(axis):
         if stop - start >= 360:
             return slice(0, coords.size)
-        raw = (start, stop)
         highest = coords.max()
         start, stop = _to_store_lon(highest, start), _to_store_lon(highest, stop)
-        if start > stop:
-            raise AntimeridianError(
-                f"The longitude range {raw[0]} to {raw[1]} wraps around the edge "
-                f"of the store's longitude axis ({coords.min()} to {coords.max()}), "
-                "so it cannot be read as one block. Request the two parts "
-                "separately."
-            )
+        wraps = start > stop
     else:
         start, stop = min(start, stop), max(start, stop)
+        wraps = False
 
     slack = _tolerance(coords)
-    indices = np.flatnonzero((coords >= start - slack) & (coords <= stop + slack))
-    if indices.size == 0:
+    if wraps:
+        # Values from start to the end of the axis, then from its other end to stop.
+        masks = [coords >= start - slack, coords <= stop + slack]
+    else:
+        masks = [(coords >= start - slack) & (coords <= stop + slack)]
+    runs: list[slice] = []
+    for mask in masks:
+        indices = np.flatnonzero(mask)
+        if indices.size:
+            runs.append(slice(int(indices[0]), int(indices[-1]) + 1))
+    return _join_runs(axis, runs, start, stop, coords.min(), coords.max())
+
+
+def _join_runs(
+    axis: Axis | LazyAxis, runs: list[slice], start: Any, stop: Any, low: Any, high: Any
+) -> Indices:
+    """Return one slice, or two for a range across the longitude seam."""
+    if not runs:
         raise EmptySelectionError(
             f"No values of {axis.name!r} lie between {_show(axis, start)} and "
-            f"{_show(axis, stop)}. The values run from {_show(axis, coords.min())} "
-            f"to {_show(axis, coords.max())}."
+            f"{_show(axis, stop)}. The values run from {_show(axis, low)} "
+            f"to {_show(axis, high)}."
         )
-    return slice(int(indices[0]), int(indices[-1]) + 1)
+    if len(runs) == 1:
+        return runs[0]
+    return runs[0], runs[1]
 
 
 def _select_nearest(
@@ -278,7 +295,7 @@ def _first_true(test: Callable[[int], bool], low: int, high: int) -> int:
     return low
 
 
-def _select_lazy(axis: LazyAxis, selection: Selection) -> slice:
+def _select_lazy(axis: LazyAxis, selection: Selection) -> Indices:
     last = axis.size - 1
     first, second = axis.value(0), axis.value(1)
     before_last, end = axis.value(last - 1), axis.value(last)
@@ -317,36 +334,37 @@ def _bisect_range(
     tolerance: float,
     start: float,
     stop: float,
-) -> slice:
+) -> Indices:
     if _numeric_longitude(axis):
         if stop - start >= 360:
             return slice(0, axis.size)
-        raw = (start, stop)
         start, stop = _to_store_lon(high, start), _to_store_lon(high, stop)
-        if start > stop:
-            raise AntimeridianError(
-                f"The longitude range {raw[0]} to {raw[1]} wraps around the edge "
-                f"of the store's longitude axis ({low} to {high}), "
-                "so it cannot be read as one block. Request the two parts "
-                "separately."
-            )
+        wraps = start > stop
     else:
         start, stop = min(start, stop), max(start, stop)
+        wraps = False
 
     bottom, top = start - tolerance, stop + tolerance
+    bounds = [(bottom, math.inf), (-math.inf, top)] if wraps else [(bottom, top)]
+    runs = [
+        run
+        for lower, upper in bounds
+        if (run := _bisect_run(axis, increasing, lower, upper)) is not None
+    ]
+    return _join_runs(axis, runs, start, stop, low, high)
+
+
+def _bisect_run(
+    axis: LazyAxis, increasing: bool, bottom: float, top: float
+) -> slice | None:
+    """Return the slice of values from ``bottom`` to ``top``, or None if empty."""
     if increasing:
         begin = _first_true(lambda i: axis.value(i) >= bottom, 0, axis.size)
         end = _first_true(lambda i: axis.value(i) > top, begin, axis.size)
     else:
         begin = _first_true(lambda i: axis.value(i) <= top, 0, axis.size)
         end = _first_true(lambda i: axis.value(i) < bottom, begin, axis.size)
-    if begin >= end:
-        raise EmptySelectionError(
-            f"No values of {axis.name!r} lie between {_show(axis, start)} and "
-            f"{_show(axis, stop)}. The values run from {_show(axis, low)} "
-            f"to {_show(axis, high)}."
-        )
-    return slice(begin, end)
+    return slice(begin, end) if begin < end else None
 
 
 def _bisect_nearest(

@@ -47,17 +47,21 @@ def extract(
     * a dimension without a keyword is kept whole.
 
     Coordinates may be ascending or descending. Longitudes are converted to the
-    store's convention (0 to 360 or -180 to 180), but a range that wraps around
-    the edge of the store's longitude axis raises ``AntimeridianError``. Time
-    selections can be ISO strings, ``datetime`` or ``numpy.datetime64``.
+    store's convention (0 to 360 or -180 to 180). A longitude range may wrap
+    around the edge of the store's longitude axis, for example ``(-10, 10)`` on
+    a 0 to 360 store: the longitude column then runs from ``start`` to ``stop``
+    across the seam (350 to 359.75, then 0 to 10). Time selections can be ISO
+    strings, ``datetime`` or ``numpy.datetime64``.
 
     CF time coordinates (``"<unit> since <date>"`` with the standard,
     gregorian or proleptic_gregorian calendar) become Arrow timestamps whose
     unit is ``s``, ``ms`` or ``us`` to match the time units. ``scale_factor``
     and ``add_offset`` are applied, and ``_FillValue`` and ``missing_value``
-    become nulls. Only the chunks that overlap the selection are read. A
-    selected coordinate with more than 8 chunks is searched by bisection, which
-    reads about one chunk per halving instead of the whole coordinate.
+    become nulls. In Zarr v2 so does the fill value in the array metadata, as
+    in xarray; in Zarr v3 only the attributes count. Only the chunks that
+    overlap the selection are read. A selected coordinate with more than 8
+    chunks is searched by bisection, which reads about one chunk per halving
+    instead of the whole coordinate.
 
     ``storage_options`` is not a selection. It is passed to the fsspec backend,
     for example ``{"anon": True}`` to read a public S3 bucket without
@@ -68,8 +72,8 @@ def extract(
         VariableNotFoundError: ``variable`` is not an array in the store.
         MissingDimensionNamesError: ``variable`` has no dimension names.
         UnknownDimensionError: A keyword is not a dimension of ``variable``.
-        SelectionError: A selection cannot be applied. Its subclasses are
-            ``EmptySelectionError`` and ``AntimeridianError``.
+        SelectionError: A selection cannot be applied. ``EmptySelectionError``
+            is a subclass.
         TimeDecodingError: Time units or values cannot be decoded.
             ``UnsupportedCalendarError`` is a subclass.
     """
@@ -138,6 +142,10 @@ def _read_axis(
     return Axis(dim, np.arange(length))
 
 
+def _join_indices(parts: tuple[slice, ...]) -> NDArray[np.intp]:
+    return np.concatenate([np.arange(part.start, part.stop) for part in parts])
+
+
 def _column(values: NDArray[Any], inner: int, outer: int) -> pa.Array:
     repeated = np.tile(np.repeat(values, inner), outer)
     if repeated.dtype.kind == "M":
@@ -179,19 +187,40 @@ def _extract_from_group(
         else slice(0, axis.size)
         for axis in axes
     ]
-    sizes = [s.stop - s.start for s in slices]
+    runs = [(sl,) if isinstance(sl, slice) else sl for sl in slices]
+    sizes = [sum(s.stop - s.start for s in parts) for parts in runs]
 
-    # Index with contiguous slices so that zarr reads only the chunks it needs.
-    raw = np.asarray(array[tuple(slices)]).reshape(sizes)
-    values, mask = unpack(raw, array.attrs)
+    if all(len(parts) == 1 for parts in runs):
+        # Index with contiguous slices so that zarr reads only the chunks it needs.
+        raw = np.asarray(array[tuple(parts[0] for parts in runs)])
+    else:
+        # A range across the longitude seam is two runs of one dimension, which
+        # orthogonal indexing reads together.
+        raw = np.asarray(
+            array.oindex[
+                tuple(
+                    parts[0] if len(parts) == 1 else _join_indices(parts)
+                    for parts in runs
+                )
+            ]
+        )
+    raw = raw.reshape(sizes)
+    # In Zarr v2 the fill value in the array metadata marks missing data, as in
+    # xarray. In v3 it is always set (often 0), so only the attributes count.
+    metadata = array.metadata
+    values, mask = unpack(
+        raw,
+        array.attrs,
+        metadata.fill_value if metadata.zarr_format == 2 else None,
+    )
 
     columns = [
         _column(
-            axis.read(sl),
+            np.concatenate([axis.read(part) for part in parts]),
             inner=math.prod(sizes[k + 1 :]),
             outer=math.prod(sizes[:k]),
         )
-        for k, (axis, sl) in enumerate(zip(axes, slices, strict=True))
+        for k, (axis, parts) in enumerate(zip(axes, runs, strict=True))
     ]
     columns.append(
         pa.array(values.ravel(), mask=None if mask is None else mask.ravel())

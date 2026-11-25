@@ -186,10 +186,11 @@ def decode_time(
     return decoded
 
 
-def _fill_values(attrs: Mapping[str, Any]) -> list[float]:
+def _fill_values(attrs: Mapping[str, Any], array_fill_value: object) -> list[float]:
     found: list[float] = []
-    for key in ("_FillValue", "missing_value"):
-        value = attrs.get(key)
+    candidates = [attrs.get("_FillValue"), attrs.get("missing_value")]
+    candidates.append(array_fill_value)
+    for value in candidates:
         if value is None:
             continue
         for item in value if isinstance(value, list | tuple) else [value]:
@@ -201,16 +202,20 @@ def _fill_values(attrs: Mapping[str, Any]) -> list[float]:
 
 
 def unpack(
-    raw: NDArray[Any], attrs: Mapping[str, Any]
+    raw: NDArray[Any], attrs: Mapping[str, Any], array_fill_value: object = None
 ) -> tuple[NDArray[Any], NDArray[np.bool_] | None]:
     """Apply CF ``scale_factor`` and ``add_offset``, and find missing values.
 
     Returns the values and a boolean mask that is True where the value is
-    missing (equal to ``_FillValue`` or ``missing_value``), or ``None`` if no
-    value is missing. The mask is computed on the stored values, before scaling.
+    missing (equal to ``_FillValue`` or ``missing_value``, or to
+    ``array_fill_value`` when given), or ``None`` if no value is missing. The
+    mask is computed on the stored values, before scaling.
+
+    ``array_fill_value`` is the fill value in the array metadata. Pass it only
+    where it marks missing data, as xarray treats it in Zarr v2.
     """
     mask: NDArray[np.bool_] | None = None
-    for fill in _fill_values(attrs):
+    for fill in _fill_values(attrs, array_fill_value):
         if math.isnan(fill):
             hit = np.isnan(raw) if raw.dtype.kind == "f" else None
         else:

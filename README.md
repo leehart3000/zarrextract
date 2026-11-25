@@ -59,8 +59,17 @@ box = zx.extract("era5.zarr", "t2m", lat=(50, 52), lon=(-1, 1), time="2020-06-01
 
 Longitudes are converted to the store's convention (0 to 360 or -180 to 180).
 CF time coordinates become Arrow timestamps, `scale_factor` and `add_offset`
-are applied, and `_FillValue` and `missing_value` become nulls. Only the
-chunks that overlap the selection are read.
+are applied, and `_FillValue` and `missing_value` become nulls. In Zarr v2
+stores the fill value in the array metadata also becomes null, as in xarray.
+Only the chunks that overlap the selection are read.
+
+A longitude range may cross the edge of the store's longitude axis. On a store
+that uses 0 to 360, `lon=(-10, 10)` gives the longitudes 350 to 359.75 and then
+0 to 10, in that order, and reads only the chunks it needs:
+
+```python
+box = zx.extract("era5.zarr", "t2m", lat=(50, 52), lon=(-10, 10), time="2020-06-01")
+```
 
 ### Write to Parquet
 
@@ -104,20 +113,6 @@ table = zx.extract(
 
 ## Limitations
 
-- A box that crosses the edge of the store's longitude axis raises
-  `AntimeridianError`. This includes the prime meridian on a store that uses
-  0 to 360. Request the two parts and join them with `pyarrow.concat_tables`:
-
-  ```python
-  import pyarrow as pa
-
-  west = zx.extract("era5.zarr", "t2m", lat=(50, 52), lon=(350, 359.75))
-  east = zx.extract("era5.zarr", "t2m", lat=(50, 52), lon=(0, 10))
-  box = pa.concat_tables([west, east])
-  ```
-
-  This example is for a store that uses 0 to 360, where `lon=(-10, 10)`
-  would raise the error.
 - Only the `standard`, `gregorian` and `proleptic_gregorian` calendars are
   supported, and `standard` or `gregorian` dates before 1582-10-15 are not.
 - Only arrays at the top level of the store are supported.

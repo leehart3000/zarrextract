@@ -180,6 +180,42 @@ def test_bisection_matches_the_whole_read(
         assert_same(path, {name: (draw(rng), draw(rng))})
 
 
+@pytest.mark.parametrize("case", [c for c in CASES if c.startswith("lon-")])
+def test_bisection_matches_the_whole_read_for_wrapping_ranges(
+    tmp_path: Path, zarr_format: ZarrFormat, case: str
+) -> None:
+    name, values, attrs, draw = CASES[case]
+    path = make_line(tmp_path / "line.zarr", zarr_format, name, values, attrs)
+    rng = np.random.default_rng(7)
+
+    tables = 0
+    for _ in range(80):
+        first, second = draw(rng), draw(rng)
+        for selection in ((first, second), (second, first)):
+            assert_same(path, {name: selection})
+            tables += isinstance(run(path, {name: selection}), pa.Table)
+    assert tables > 20
+
+
+def test_wrapping_ranges_on_both_paths_give_the_same_longitudes(
+    tmp_path: Path, zarr_format: ZarrFormat
+) -> None:
+    path = make_line(
+        tmp_path / "line.zarr",
+        zarr_format,
+        "lon",
+        np.arange(0.0, 360.0, 5.0),
+        {"units": "degrees_east"},
+    )
+    expected = [345.0, 350.0, 355.0, 0.0, 5.0, 10.0]
+
+    for selection in ((-15, 10), (345, 10), (345, 370)):
+        assert_same(path, {"lon": selection})
+        table = run(path, {"lon": selection})
+        assert isinstance(table, pa.Table)
+        assert table["lon"].to_pylist() == expected
+
+
 def test_bisection_matches_for_edge_selections(
     tmp_path: Path, zarr_format: ZarrFormat
 ) -> None:
@@ -285,6 +321,26 @@ def test_a_range_on_a_long_coordinate_reads_few_chunks(long_line: Path) -> None:
 
     assert table.num_rows == 4
     assert 0 < len(store.chunk_reads("time")) <= 30
+
+
+def test_a_range_across_the_seam_reads_only_its_two_ends(
+    tmp_path: Path, zarr_format: ZarrFormat
+) -> None:
+    # 720 longitudes in 144 chunks of 5, and the variable has the same chunks.
+    lon = np.arange(0.0, 360.0, 0.5)
+    group = zarr.open_group(tmp_path / "w.zarr", mode="w", zarr_format=zarr_format)
+    write_array(
+        group, "lon", lon, ("lon",), chunks=(5,), attrs={"units": "degrees_east"}
+    )
+    write_array(group, "v", np.arange(720.0), ("lon",), chunks=(5,))
+
+    table, store = counted_line(tmp_path / "w.zarr", {"lon": (-10, 10)})
+
+    assert table["lon"].to_pylist() == [*lon[700:], *lon[:21]]
+    assert table["v"].to_pylist() == [*range(700, 720), *range(21)]
+    # Indices 700..719 are 4 chunks and 0..20 are 5 chunks.
+    assert len(store.chunk_reads("v")) == 9
+    assert len(store.chunk_reads("lon")) <= 30
 
 
 def test_a_coordinate_with_few_chunks_is_read_whole(

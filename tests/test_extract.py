@@ -211,24 +211,68 @@ def test_nearest_longitude_wraps_on_a_global_grid(grid: Path) -> None:
     assert west["lon"].to_pylist() == [0.0]
 
 
+EIGHT_LONS_0_360 = [0.0, 45.0, 90.0, 135.0, 180.0, 225.0, 270.0, 315.0]
+EIGHT_LONS_180 = [-180.0, -135.0, -90.0, -45.0, 0.0, 45.0, 90.0, 135.0]
+
+
 @pytest.mark.parametrize(
-    ("lon_values", "box"),
+    ("lon_values", "box", "columns"),
     [
-        ([-180.0, -90.0, 0.0, 90.0], (170, -170)),
-        ([0.0, 90.0, 180.0, 270.0], (-10, 10)),
-        ([0.0, 90.0, 180.0, 270.0], (350, 10)),
+        # (store longitudes, requested range, longitude column as indices)
+        (EIGHT_LONS_0_360, (-50, 50), [7, 0, 1]),
+        (EIGHT_LONS_0_360, (310, 50), [7, 0, 1]),
+        (EIGHT_LONS_180, (100, -100), [7, 0, 1]),
+        (EIGHT_LONS_180, (130, -130), [7, 0, 1]),
+        (EIGHT_LONS_180, (170, -170), [0]),
     ],
 )
-def test_box_crossing_the_antimeridian_raises(
+def test_box_across_the_longitude_seam(
     tmp_path: Path,
     zarr_format: ZarrFormat,
     lon_values: list[float],
     box: tuple[float, float],
+    columns: list[int],
 ) -> None:
     store = make_grid(tmp_path / "g.zarr", zarr_format, lon=lon_values)
 
-    with pytest.raises(zarrextract.AntimeridianError, match="wraps around"):
-        extract(store, "temp", lon=box)
+    table = extract(
+        store, "temp", time=("2000-01-02", "2000-01-03"), lat=(45, 0), lon=box
+    )
+
+    cells = [(t, y, x) for t in (1, 2) for y in (1, 2) for x in columns]
+    assert table.to_pydict() == {
+        "time": [dt.datetime(2000, 1, 1 + t) for t, _, _ in cells],
+        "lat": [LATS[y] for _, y, _ in cells],
+        "lon": [lon_values[x] for _, _, x in cells],
+        "temp": [expected_temp(t, y, x) for t, y, x in cells],
+    }
+
+
+def test_box_across_the_seam_reads_only_the_chunks_it_needs(
+    tmp_path: Path, zarr_format: ZarrFormat
+) -> None:
+    store = make_grid(tmp_path / "g.zarr", zarr_format, lon=EIGHT_LONS_0_360)
+
+    table, counted = counted_extract(store, time="2000-01-01", lat=45, lon=(-50, 50))
+
+    assert table["lon"].to_pylist() == [315.0, 0.0, 45.0]
+    # Longitude chunks hold 2 values: indices 7, 0 and 1 are in chunks 3 and 0.
+    assert len(counted.chunk_reads("temp")) == 2
+
+
+def test_a_seam_range_outside_a_regional_store_still_finds_its_part(
+    tmp_path: Path, zarr_format: ZarrFormat
+) -> None:
+    # Only the part of (-50, 50) that is 0..50 exists on this store.
+    store = make_grid(tmp_path / "g.zarr", zarr_format, lon=[0.0, 45.0, 90.0, 135.0])
+
+    table = extract(store, "temp", time="2000-01-01", lat=45, lon=(-50, 50))
+
+    assert table["lon"].to_pylist() == [0.0, 45.0]
+
+
+def test_antimeridian_error_is_still_exported() -> None:
+    assert issubclass(zarrextract.AntimeridianError, zarrextract.SelectionError)
 
 
 def test_longitude_found_by_name_when_there_are_no_attributes(
@@ -289,6 +333,60 @@ def test_fill_value_without_packing_keeps_integers(
 
     assert table["temp"].type == pa.int16()
     assert table["temp"].to_pylist() == [0, None]
+
+
+def test_v2_array_fill_value_is_a_missing_marker_but_v3_is_not(
+    tmp_path: Path, zarr_format: ZarrFormat
+) -> None:
+    raw = np.arange(4 * 5 * 4, dtype="i2").reshape(4, 5, 4)
+    raw[0, 0, 0] = -32768
+    store = make_grid(tmp_path / "g.zarr", zarr_format, data=raw, fill_value=-32768)
+
+    table = extract(store, "temp", time="2000-01-01", lat=90, lon=(0, 90))
+
+    # No _FillValue attribute: only Zarr v2 reads the fill value from the metadata.
+    expected = [None, 1] if zarr_format == 2 else [-32768, 1]
+    assert table["temp"].to_pylist() == expected
+
+
+def test_v2_array_fill_value_masks_packed_data_before_unpacking(
+    tmp_path: Path,
+) -> None:
+    raw = np.arange(4 * 5 * 4, dtype="i2").reshape(4, 5, 4)
+    raw[0, 0, 0] = -32768
+    store = make_grid(
+        tmp_path / "g.zarr",
+        2,
+        data=raw,
+        data_attrs={"scale_factor": 0.001, "add_offset": 298.15},
+        fill_value=-32768,
+    )
+
+    table = extract(store, "temp", time="2000-01-01", lat=90, lon=(0, 90))
+
+    assert table["temp"].to_pylist() == [None, 1 * 0.001 + 298.15]
+
+
+def test_v2_nan_fill_value_makes_nan_null(tmp_path: Path) -> None:
+    raw = np.ones((4, 5, 4))
+    raw[0, 0, 0] = np.nan
+    store = make_grid(tmp_path / "g.zarr", 2, data=raw, fill_value=np.nan)
+
+    table = extract(store, "temp", time="2000-01-01", lat=90, lon=(0, 90))
+
+    assert table["temp"].to_pylist() == [None, 1.0]
+
+
+def test_zero_is_kept_when_the_fill_value_is_the_zarr_default(
+    tmp_path: Path, zarr_format: ZarrFormat
+) -> None:
+    # Zarr v3 always sets fill_value (0 here) and v2 leaves it unset.
+    raw = np.zeros((4, 5, 4), dtype="i2")
+    store = make_grid(tmp_path / "g.zarr", zarr_format, data=raw)
+
+    table = extract(store, "temp", time="2000-01-01", lat=90, lon=(0, 90))
+
+    assert table["temp"].to_pylist() == [0, 0]
 
 
 def test_nan_is_null_only_when_declared_as_a_fill_value(

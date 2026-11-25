@@ -19,6 +19,7 @@ def write_array(
     *,
     chunks: tuple[int, ...] | None = None,
     attrs: dict[str, Any] | None = None,
+    fill_value: Any = None,
 ) -> None:
     """Write an array with dimension names in the style of the store's format."""
     values = np.asarray(data)
@@ -29,6 +30,7 @@ def write_array(
         chunks=chunks if chunks is not None else values.shape,
         dtype=values.dtype,
         dimension_names=dims if v3 else None,
+        fill_value=fill_value,
     )
     array[...] = values
     if not v3 and dims is not None:
@@ -48,6 +50,7 @@ def make_grid(
     data: npt.ArrayLike | None = None,
     data_attrs: dict[str, Any] | None = None,
     chunks: tuple[int, int, int] = (1, 2, 2),
+    fill_value: Any = None,
 ) -> Path:
     """Write a (time, lat, lon) grid with a variable called ``temp``.
 
@@ -75,7 +78,13 @@ def make_grid(
     write_array(group, "lat", lat_values, ("lat",), attrs={"units": "degrees_north"})
     write_array(group, "lon", lon_values, ("lon",), attrs={"units": "degrees_east"})
     write_array(
-        group, "temp", data, ("time", "lat", "lon"), chunks=chunks, attrs=data_attrs
+        group,
+        "temp",
+        data,
+        ("time", "lat", "lon"),
+        chunks=chunks,
+        attrs=data_attrs,
+        fill_value=fill_value,
     )
     return path
 

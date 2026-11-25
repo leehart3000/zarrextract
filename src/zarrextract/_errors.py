@@ -34,7 +34,11 @@ class EmptySelectionError(SelectionError):
 
 
 class AntimeridianError(SelectionError):
-    """A longitude range crosses the antimeridian, which is not supported yet."""
+    """A longitude range wraps around the edge of the longitude axis.
+
+    No longer raised: such ranges are read across the seam since 0.2. The class
+    stays for code that catches it.
+    """
 
 
 class TimeDecodingError(ZarrExtractError):
