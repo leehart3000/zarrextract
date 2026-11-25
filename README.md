@@ -90,6 +90,10 @@ that uses 0 to 360, `lon=(-10, 10)` gives the longitudes 350 to 359.75 and then
 box = zx.extract("era5.zarr", "t2m", lat=(50, 52), lon=(-10, 10), time="2020-06-01")
 ```
 
+### Try it in Colab
+
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/leehart3000/zarrextract/blob/main/notebooks/mur_sst.ipynb) A demo notebook that reads points, time series and boxes of sea surface temperature from a public S3 store.
+
 ### Write to Parquet
 
 ```python
