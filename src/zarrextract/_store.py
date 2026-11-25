@@ -1,6 +1,7 @@
 """Opening Zarr stores and reading array metadata."""
 
 import os
+from collections.abc import Mapping
 from typing import Any
 
 import zarr
@@ -9,14 +10,24 @@ import zarr.errors
 from zarrextract._errors import StoreOpenError
 
 
-def open_group(store: str | os.PathLike[str]) -> zarr.Group:
+def open_group(
+    store: str | os.PathLike[str],
+    storage_options: Mapping[str, Any] | None = None,
+) -> zarr.Group:
     """Open a store read-only, using consolidated metadata when present.
 
     ``store`` is a local path or a URL. URLs need the matching fsspec backend.
+    ``storage_options`` is passed to ``zarr.open_group``, which hands it to
+    the fsspec backend.
     """
     target = os.fspath(store)
     try:
-        return zarr.open_group(target, mode="r", use_consolidated=None)
+        return zarr.open_group(
+            target,
+            mode="r",
+            use_consolidated=None,
+            storage_options=None if storage_options is None else dict(storage_options),
+        )
     except ImportError as exc:
         raise StoreOpenError(
             f"Cannot open {target!r}: a required package is missing ({exc}). "

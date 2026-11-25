@@ -1,8 +1,9 @@
 """Describe the arrays in a Zarr store."""
 
 import os
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
+from typing import Any
 
 from zarrextract._errors import VariableNotFoundError
 from zarrextract._store import dimension_names, open_group
@@ -54,17 +55,24 @@ class StoreDescription:
         raise VariableNotFoundError(f"No array named {name!r} in the store")
 
 
-def describe(store: str | os.PathLike[str]) -> StoreDescription:
+def describe(
+    store: str | os.PathLike[str],
+    *,
+    storage_options: Mapping[str, Any] | None = None,
+) -> StoreDescription:
     """List the arrays in a Zarr store without reading any data.
 
     ``store`` is a local path or a URL string. URLs work if the matching
     fsspec backend is installed. Consolidated metadata is used when present.
     Only arrays at the top level of the store are listed.
 
+    ``storage_options`` is passed to the fsspec backend, for example
+    ``{"anon": True}`` to read a public S3 bucket without credentials.
+
     Raises:
         StoreOpenError: The store cannot be opened.
     """
-    group = open_group(store)
+    group = open_group(store, storage_options)
     infos: list[ArrayInfo] = []
     for name, array in sorted(group.arrays(), key=lambda item: item[0]):
         dims = dimension_names(array)

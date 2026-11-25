@@ -477,7 +477,7 @@ def test_scalar_variable(tmp_path: Path, zarr_format: ZarrFormat) -> None:
     ],
 )
 def test_scalar_within_one_step_outside_is_accepted(
-    grid: Path, selection: dict[str, float], expected_lat: float
+    grid: Path, selection: dict[str, Any], expected_lat: float
 ) -> None:
     table = extract(grid, "temp", time="2000-01-01", lon=0, **selection)
 

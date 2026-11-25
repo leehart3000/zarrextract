@@ -179,8 +179,15 @@ def test_describe_directory_that_is_not_a_store(tmp_path: Path) -> None:
 
 def test_describe_url_without_backend() -> None:
     # The scheme is made up so that no installed fsspec backend can handle it.
-    with pytest.raises(zarrextract.StoreOpenError, match="fsspec"):
+    with pytest.raises(zarrextract.StoreOpenError, match="nosuchscheme"):
         describe("nosuchscheme://bucket/store.zarr")
+
+
+def test_describe_url_with_missing_backend_package() -> None:
+    # fsspec knows gs:// but needs gcsfs, which is not a dependency.
+    pytest.importorskip("fsspec")
+    with pytest.raises(zarrextract.StoreOpenError, match="gcsfs"):
+        describe("gs://bucket/store.zarr")
 
 
 def test_exception_hierarchy() -> None:

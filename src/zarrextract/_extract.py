@@ -2,6 +2,7 @@
 
 import math
 import os
+from collections.abc import Mapping
 from typing import Any
 
 import numpy as np
@@ -24,6 +25,8 @@ def extract(
     store: str | os.PathLike[str],
     variable: str,
     /,
+    *,
+    storage_options: Mapping[str, Any] | None = None,
     **selections: Selection,
 ) -> pa.Table:
     """Extract part of a variable from a Zarr store as a long-format table.
@@ -50,6 +53,10 @@ def extract(
     and ``add_offset`` are applied, and ``_FillValue`` and ``missing_value``
     become nulls. Only the chunks that overlap the selection are read.
 
+    ``storage_options`` is not a selection. It is passed to the fsspec backend,
+    for example ``{"anon": True}`` to read a public S3 bucket without
+    credentials, so a dimension cannot be called ``storage_options``.
+
     Raises:
         StoreOpenError: The store cannot be opened.
         VariableNotFoundError: ``variable`` is not an array in the store.
@@ -60,7 +67,7 @@ def extract(
         TimeDecodingError: Time units or values cannot be decoded.
             ``UnsupportedCalendarError`` is a subclass.
     """
-    return _extract_from_group(open_group(store), variable, selections)
+    return _extract_from_group(open_group(store, storage_options), variable, selections)
 
 
 def _find_array(group: zarr.Group, variable: str) -> "zarr.Array[Any]":

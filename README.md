@@ -21,9 +21,9 @@ variable `t2m` with those dimensions.
 `describe()` lists the arrays in a store without reading any data.
 
 ```python
-from zarrextract import describe
+import zarrextract as zx
 
-description = describe("era5.zarr")
+description = zx.describe("era5.zarr")
 for array in description:
     print(array.name, array.dimensions, array.shape, array.dtype)
 
@@ -34,7 +34,7 @@ description.data_variables  # everything else
 
 ### Extract data
 
-`extract(store, variable, **selections)` returns a `pyarrow.Table` in long
+`zx.extract(store, variable, **selections)` returns a `pyarrow.Table` in long
 format: one column per dimension of the variable, then a column for the
 variable itself, with one row per value. Each keyword names a dimension:
 
@@ -43,18 +43,18 @@ variable itself, with one row per value. Each keyword names a dimension:
 - a dimension without a keyword is kept whole.
 
 ```python
-from zarrextract import extract
+import zarrextract as zx
 
 # A point
-point = extract("era5.zarr", "t2m", lat=51.5, lon=-0.1, time="2020-06-01")
+point = zx.extract("era5.zarr", "t2m", lat=51.5, lon=-0.1, time="2020-06-01")
 
 # A time series at one location
-series = extract(
+series = zx.extract(
     "era5.zarr", "t2m", lat=51.5, lon=-0.1, time=("2020-01-01", "2020-12-31")
 )
 
 # A bounding box at one time
-box = extract("era5.zarr", "t2m", lat=(50, 52), lon=(-1, 1), time="2020-06-01")
+box = zx.extract("era5.zarr", "t2m", lat=(50, 52), lon=(-1, 1), time="2020-06-01")
 ```
 
 Longitudes are converted to the store's convention (0 to 360 or -180 to 180).
@@ -76,17 +76,31 @@ Local paths work as they are. URLs need `fsspec` and the backend for their
 protocol, for example `s3fs` for `s3://` or `gcsfs` for `gs://`.
 
 ```bash
-pip install fsspec s3fs
+pip install "zarrextract[s3]"    # s3fs, for s3://
+pip install "zarrextract[http]"  # fsspec and aiohttp, for http:// and https://
 ```
 
 ```python
-table = extract("s3://bucket/era5.zarr", "t2m", lat=51.5, lon=-0.1)
+table = zx.extract("s3://bucket/era5.zarr", "t2m", lat=51.5, lon=-0.1)
 ```
 
 The backend finds credentials in its usual way, for example from
-environment variables or a configuration file. Passing storage options to
-the backend, such as anonymous access to a public bucket, is not supported
-yet.
+environment variables or a configuration file. To pass options to the
+backend, use the keyword-only `storage_options` argument of `describe()` and
+`extract()`. For example, to read a public bucket without credentials:
+
+```python
+table = zx.extract(
+    "s3://bucket/era5.zarr",
+    "t2m",
+    lat=51.5,
+    lon=-0.1,
+    storage_options={"anon": True},
+)
+```
+
+`storage_options` is not a selection, so a dimension cannot be called
+`storage_options`.
 
 ## Limitations
 
@@ -97,8 +111,8 @@ yet.
   ```python
   import pyarrow as pa
 
-  west = extract("era5.zarr", "t2m", lat=(50, 52), lon=(350, 359.75))
-  east = extract("era5.zarr", "t2m", lat=(50, 52), lon=(0, 10))
+  west = zx.extract("era5.zarr", "t2m", lat=(50, 52), lon=(350, 359.75))
+  east = zx.extract("era5.zarr", "t2m", lat=(50, 52), lon=(0, 10))
   box = pa.concat_tables([west, east])
   ```
 
