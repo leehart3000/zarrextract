@@ -19,7 +19,7 @@ from zarrextract._errors import (
 )
 from zarrextract._probe import LazyAxis
 from zarrextract._select import Axis, Selection, select
-from zarrextract._store import dimension_names, open_group
+from zarrextract._store import dimension_names, open_group, wrap_client_errors
 
 BISECT_MIN_CHUNKS = 8
 """Selected coordinates with more chunks than this are searched by bisection."""
@@ -68,7 +68,8 @@ def extract(
     credentials, so a dimension cannot be called ``storage_options``.
 
     Raises:
-        StoreOpenError: The store cannot be opened.
+        StoreOpenError: The store cannot be opened, or the server or the
+            connection fails while it is read.
         VariableNotFoundError: ``variable`` is not an array in the store.
         MissingDimensionNamesError: ``variable`` has no dimension names.
         UnknownDimensionError: A keyword is not a dimension of ``variable``.
@@ -77,7 +78,10 @@ def extract(
         TimeDecodingError: Time units or values cannot be decoded.
             ``UnsupportedCalendarError`` is a subclass.
     """
-    return _extract_from_group(open_group(store, storage_options), variable, selections)
+    with wrap_client_errors(os.fspath(store)):
+        return _extract_from_group(
+            open_group(store, storage_options), variable, selections
+        )
 
 
 def _find_array(group: zarr.Group, variable: str) -> "zarr.Array[Any]":

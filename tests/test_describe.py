@@ -1,6 +1,9 @@
 import dataclasses
+import warnings
 from pathlib import Path
+from typing import Any
 
+import numpy as np
 import pytest
 import zarr
 
@@ -117,15 +120,147 @@ def test_describe_zero_dimensional_array(
     assert not info.is_coordinate
 
 
+def make_nested(path: Path, zarr_format: ZarrFormat) -> Path:
+    group = zarr.open_group(path, mode="w", zarr_format=zarr_format)
+    write_array(group, "a", [1.0], ("a",))
+    sub = group.create_group("sub")
+    write_array(sub, "b", [1.0, 2.0], ("b",))
+    write_array(sub.create_group("deep"), "c", [1.0, 2.0, 3.0], ("c",))
+    return path
+
+
 @pytest.mark.parametrize("zarr_format", FORMATS)
-def test_describe_ignores_nested_groups(
+def test_describe_lists_nested_arrays_with_paths(
+    tmp_path: Path, zarr_format: ZarrFormat
+) -> None:
+    store = make_nested(tmp_path / "s.zarr", zarr_format)
+
+    result = describe(store)
+
+    assert [a.name for a in result] == ["a", "sub/b", "sub/deep/c"]
+    assert result["sub/deep/c"].shape == (3,)
+    assert result.coordinates == (result["a"],)
+
+
+@pytest.mark.parametrize("zarr_format", FORMATS)
+@pytest.mark.parametrize(
+    ("max_depth", "expected"),
+    [
+        (0, ["a"]),
+        (1, ["a", "sub/b"]),
+        (2, ["a", "sub/b", "sub/deep/c"]),
+        (None, ["a", "sub/b", "sub/deep/c"]),
+    ],
+)
+def test_describe_max_depth(
+    tmp_path: Path,
+    zarr_format: ZarrFormat,
+    max_depth: int | None,
+    expected: list[str],
+) -> None:
+    store = make_nested(tmp_path / "s.zarr", zarr_format)
+
+    assert [a.name for a in describe(store, max_depth=max_depth)] == expected
+
+
+def test_describe_rejects_negative_max_depth(tmp_path: Path) -> None:
+    store = make_nested(tmp_path / "s.zarr", 3)
+
+    with pytest.raises(ValueError, match="max_depth"):
+        describe(store, max_depth=-1)
+
+
+@pytest.mark.parametrize("zarr_format", FORMATS)
+def test_describe_names_are_extract_paths(
     tmp_path: Path, zarr_format: ZarrFormat
 ) -> None:
     group = zarr.open_group(tmp_path / "s.zarr", mode="w", zarr_format=zarr_format)
-    write_array(group, "a", [1.0], ("a",))
-    write_array(group.create_group("sub"), "b", [1.0], ("b",))
+    image = group.create_group("0")
+    write_array(
+        image,
+        "0",
+        np.arange(24, dtype="f4").reshape(2, 3, 4),
+        ("t", "y", "x"),
+        chunks=(1, 3, 4),
+    )
 
-    assert [a.name for a in describe(tmp_path / "s.zarr").arrays] == ["a"]
+    (info,) = describe(tmp_path / "s.zarr")
+    table = zarrextract.extract(tmp_path / "s.zarr", info.name, t=1, y=2, x=3)
+
+    assert info.name == "0/0"
+    assert table.column_names == ["t", "y", "x", "0/0"]
+    assert table["0/0"].to_pylist() == [23.0]
+
+
+def break_listing(monkeypatch: pytest.MonkeyPatch, exc: Exception) -> None:
+    """Make every listing of a group fail, as on a server that cannot list."""
+
+    def members(self: zarr.Group, *args: object, **kwargs: object) -> object:
+        raise exc
+
+    monkeypatch.setattr(zarr.Group, "members", members)
+
+
+def test_describe_unlistable_store_without_consolidated_metadata(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = make_nested(tmp_path / "s.zarr", 3)
+    break_listing(monkeypatch, ValueError("409 Conflict"))
+
+    with pytest.raises(zarrextract.StoreOpenError, match="cannot be listed") as info:
+        describe(store)
+
+    assert "extract() still works" in str(info.value)
+    assert "409 Conflict" in str(info.value)
+
+
+@pytest.mark.parametrize("zarr_format", FORMATS)
+def test_describe_unlistable_store_uses_consolidated_metadata(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, zarr_format: ZarrFormat
+) -> None:
+    store = make_nested(tmp_path / "s.zarr", zarr_format)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        zarr.consolidate_metadata(store)
+    expected = describe(store)
+    break_listing(monkeypatch, ValueError("cannot list"))
+
+    assert describe(store) == expected
+    assert [a.name for a in describe(store, max_depth=1)] == ["a", "sub/b"]
+
+
+def test_describe_wraps_http_client_errors(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    aiohttp = pytest.importorskip("aiohttp")
+    yarl = pytest.importorskip("yarl")
+    store = make_nested(tmp_path / "s.zarr", 3)
+    url = yarl.URL("https://example.invalid/store.zarr/")
+    error = aiohttp.ClientResponseError(
+        request_info=aiohttp.RequestInfo(url, "GET", {}, url),
+        history=(),
+        status=409,
+        message="Conflict",
+    )
+    break_listing(monkeypatch, error)
+
+    with pytest.raises(zarrextract.StoreOpenError, match="409"):
+        describe(store)
+
+
+def test_extract_wraps_http_client_errors(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    aiohttp = pytest.importorskip("aiohttp")
+    store = make_store(tmp_path / "s.zarr", 3)
+
+    def fail(self: zarr.Array[Any], *args: object) -> object:
+        raise aiohttp.ClientConnectionError("connection reset")
+
+    monkeypatch.setattr(zarr.Array, "__getitem__", fail)
+
+    with pytest.raises(zarrextract.StoreOpenError, match="connection reset"):
+        zarrextract.extract(store, "temp", time=0)
 
 
 def test_results_are_frozen(tmp_path: Path) -> None:

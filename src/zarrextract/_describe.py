@@ -5,7 +5,9 @@ from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
 from typing import Any
 
-from zarrextract._errors import VariableNotFoundError
+import zarr
+
+from zarrextract._errors import StoreOpenError, VariableNotFoundError
 from zarrextract._store import dimension_names, open_group
 
 
@@ -25,7 +27,7 @@ class ArrayInfo:
 
 @dataclass(frozen=True, slots=True)
 class StoreDescription:
-    """The top-level arrays of a store, sorted by name."""
+    """The arrays of a store, sorted by name (their path from the store)."""
 
     arrays: tuple[ArrayInfo, ...]
 
@@ -55,26 +57,70 @@ class StoreDescription:
         raise VariableNotFoundError(f"No array named {name!r} in the store")
 
 
+def _list_arrays(
+    group: zarr.Group, max_depth: int | None, target: str
+) -> list[tuple[str, "zarr.Array[Any]"]]:
+    """List the arrays under a group, by listing or else from consolidated metadata."""
+    try:
+        return [
+            (path, node)
+            for path, node in group.members(max_depth=max_depth)
+            if isinstance(node, zarr.Array)
+        ]
+    except Exception as exc:
+        consolidated = group.metadata.consolidated_metadata
+        if consolidated is None:
+            raise StoreOpenError(
+                f"Cannot list the arrays in {target!r}: the store cannot be listed "
+                f"({type(exc).__name__}: {exc}) and it has no consolidated "
+                "metadata. extract() still works if you know the array's path."
+            ) from exc
+        arrays: list[tuple[str, zarr.Array[Any]]] = []
+        for path in consolidated.flattened_metadata:
+            if max_depth is not None and path.count("/") > max_depth:
+                continue
+            node = group[path]
+            if isinstance(node, zarr.Array):
+                arrays.append((path, node))
+        return arrays
+
+
 def describe(
     store: str | os.PathLike[str],
     *,
+    max_depth: int | None = None,
     storage_options: Mapping[str, Any] | None = None,
 ) -> StoreDescription:
     """List the arrays in a Zarr store without reading any data.
 
     ``store`` is a local path or a URL string. URLs work if the matching
     fsspec backend is installed. Consolidated metadata is used when present.
-    Only arrays at the top level of the store are listed.
+
+    Arrays in nested groups are listed too, named by their path from the
+    store, such as ``"0/0"`` in an OME-Zarr image. That path is what
+    ``extract()`` takes. ``max_depth`` limits how many levels of groups are
+    searched: 0 lists only the top-level arrays, 1 also the arrays in their
+    child groups, and so on. By default there is no limit.
+
+    Some servers cannot list a group, for example plain HTTPS servers that
+    answer a directory URL with an error. Then the group's consolidated
+    metadata is used instead, and if there is none, ``StoreOpenError`` says so.
 
     ``storage_options`` is passed to the fsspec backend, for example
     ``{"anon": True}`` to read a public S3 bucket without credentials.
 
     Raises:
-        StoreOpenError: The store cannot be opened.
+        StoreOpenError: The store cannot be opened or listed, or the server
+            or the connection fails.
     """
+    if max_depth is not None and max_depth < 0:
+        raise ValueError(f"max_depth must be None or >= 0, not {max_depth}")
+    target = os.fspath(store)
     group = open_group(store, storage_options)
     infos: list[ArrayInfo] = []
-    for name, array in sorted(group.arrays(), key=lambda item: item[0]):
+    for name, array in sorted(
+        _list_arrays(group, max_depth, target), key=lambda item: item[0]
+    ):
         dims = dimension_names(array)
         infos.append(
             ArrayInfo(

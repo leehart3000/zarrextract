@@ -32,6 +32,21 @@ description.coordinates  # the 1-D coordinate arrays
 description.data_variables  # everything else
 ```
 
+Arrays in nested groups are listed by their path, which is what `extract()`
+takes. For example, an OME-Zarr image keeps its data in `0/0`:
+
+```python
+description = zx.describe("image.zarr")
+print(description["0/0"].dimensions)  # ('t', 'c', 'z', 'y', 'x')
+series = zx.extract("image.zarr", "0/0", c=0, z=0, y=100, x=100)
+
+zx.describe("image.zarr", max_depth=0)  # top-level arrays only
+```
+
+Some servers cannot list a group. `describe()` then uses the consolidated
+metadata, and raises `StoreOpenError` if there is none. `extract()` still
+works there if you know the array's path.
+
 ### Extract data
 
 `zx.extract(store, variable, **selections)` returns a `pyarrow.Table` in long
@@ -56,6 +71,10 @@ series = zx.extract(
 # A bounding box at one time
 box = zx.extract("era5.zarr", "t2m", lat=(50, 52), lon=(-1, 1), time="2020-06-01")
 ```
+
+Coordinates are assumed to be sorted, ascending or descending. Long
+coordinates are searched by bisection, which gives wrong results on unsorted
+values.
 
 Longitudes are converted to the store's convention (0 to 360 or -180 to 180).
 CF time coordinates become Arrow timestamps, `scale_factor` and `add_offset`
@@ -115,7 +134,9 @@ table = zx.extract(
 
 - Only the `standard`, `gregorian` and `proleptic_gregorian` calendars are
   supported, and `standard` or `gregorian` dates before 1582-10-15 are not.
-- Only arrays at the top level of the store are supported.
+- Coordinates are looked up at the top level of the store, so arrays in nested
+  groups are selected by index unless the store has a top-level coordinate
+  of the same name.
 - Dask is not supported.
 
 ## Licence

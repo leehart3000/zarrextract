@@ -1,13 +1,47 @@
 """Opening Zarr stores and reading array metadata."""
 
 import os
-from collections.abc import Mapping
+import sys
+from collections.abc import Iterator, Mapping
+from contextlib import contextmanager
 from typing import Any
 
 import zarr
 import zarr.errors
 
 from zarrextract._errors import StoreOpenError
+
+
+def is_client_error(exc: BaseException) -> bool:
+    """Say whether ``exc`` is an HTTP client or fsspec error from a remote store.
+
+    aiohttp is an optional dependency, so it is only consulted if something
+    has already imported it, as any remote store using it will have done.
+    """
+    aiohttp = sys.modules.get("aiohttp")
+    if aiohttp is not None and isinstance(exc, aiohttp.ClientError):
+        return True
+    fsspec_exceptions = sys.modules.get("fsspec.exceptions")
+    if fsspec_exceptions is not None:
+        return isinstance(
+            exc,
+            fsspec_exceptions.FSTimeoutError | fsspec_exceptions.BlocksizeMismatchError,
+        )
+    return False
+
+
+@contextmanager
+def wrap_client_errors(target: str) -> Iterator[None]:
+    """Raise ``StoreOpenError`` for HTTP client and fsspec errors."""
+    try:
+        yield
+    except Exception as exc:
+        if is_client_error(exc):
+            raise StoreOpenError(
+                f"Cannot read {target!r}: the server or the connection failed "
+                f"({type(exc).__name__}: {exc})."
+            ) from exc
+        raise
 
 
 def open_group(
@@ -22,12 +56,15 @@ def open_group(
     """
     target = os.fspath(store)
     try:
-        return zarr.open_group(
-            target,
-            mode="r",
-            use_consolidated=None,
-            storage_options=None if storage_options is None else dict(storage_options),
-        )
+        with wrap_client_errors(target):
+            return zarr.open_group(
+                target,
+                mode="r",
+                use_consolidated=None,
+                storage_options=None
+                if storage_options is None
+                else dict(storage_options),
+            )
     except ImportError as exc:
         raise StoreOpenError(
             f"Cannot open {target!r}: a required package is missing ({exc}). "
