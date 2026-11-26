@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- The ZarrExtract logo and favicon in the documentation and the README, and
+  the brand colours in the documentation theme.
 - Documentation built with Sphinx for Read the Docs, with a user guide, an API
   reference and the two example notebooks.
 - The `noleap` and `365_day` calendars (the same calendar), which most CMIP6

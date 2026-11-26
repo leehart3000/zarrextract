@@ -1,6 +1,6 @@
-# zarrextract
+# ZarrExtract
 
-zarrextract extracts points, time series and bounding boxes from Zarr stores
+ZarrExtract extracts points, time series and bounding boxes from Zarr stores
 into Apache Arrow tables. It is a lighter alternative to
 `xarray.open_zarr(...).sel(...)` for the common case where you only want a
 small piece of a large store, and it needs only `zarr`, `pyarrow` and `numpy`.
@@ -48,4 +48,5 @@ guide
 api
 examples
 changelog
+brand
 ```

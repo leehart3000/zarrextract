@@ -1,6 +1,8 @@
-# zarrextract
+<p align="center">
+  <img src="https://gitlab.com/leehart3000/zarrextract/-/raw/main/docs/_static/brand/zarrextract-lockup.svg" alt="ZarrExtract" width="320">
+</p>
 
-zarrextract extracts points, time series and bounding boxes from Zarr stores
+ZarrExtract extracts points, time series and bounding boxes from Zarr stores
 into Apache Arrow tables. It is a lighter alternative to
 `xarray.open_zarr(...).sel(...)` for the common case where you only want a
 small piece of a large store, and it needs only `zarr`, `pyarrow` and `numpy`.
