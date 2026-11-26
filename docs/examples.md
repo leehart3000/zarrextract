@@ -2,7 +2,7 @@
 
 Three notebooks read small pieces of public stores: two on AWS Open Data and
 one image on the Image Data Resource. They are shown here with the outputs
-saved in the notebooks (the microscopy notebook has none yet), and each opens
+saved in the notebooks, and each opens
 in Google Colab.
 
 ```{toctree}
