@@ -94,6 +94,8 @@ box = zx.extract("era5.zarr", "t2m", lat=(50, 52), lon=(-10, 10), time="2020-06-
 
 [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/leehart3000/zarrextract/blob/main/notebooks/mur_sst.ipynb) A demo notebook that reads points, time series and boxes of sea surface temperature from a public S3 store.
 
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/leehart3000/zarrextract/blob/main/notebooks/cmip6_tas.ipynb) A second notebook that reads a monthly climate model time series and a box across the prime meridian of a 0 to 360 longitude store (CMIP6, CC BY 4.0).
+
 ### Write to Parquet
 
 ```python
