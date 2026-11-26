@@ -99,6 +99,8 @@ box = zx.extract("era5.zarr", "t2m", lat=(50, 52), lon=(-10, 10), time="2020-06-
 
 [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/leehart3000/zarrextract/blob/main/notebooks/cmip6_tas.ipynb) A second notebook that reads a monthly climate model time series and a box across the prime meridian of a 0 to 360 longitude store (CMIP6, CC BY 4.0).
 
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/leehart3000/zarrextract/blob/main/notebooks/ome_zarr_idr0051.ipynb) A third notebook that reads a pixel time series and a 2D slice of a light-sheet OME-Zarr image over HTTPS, in a store that cannot be listed (IDR idr0051, Steventon et al., CC BY 4.0; [data](https://doi.org/10.17867/10000117), [paper](https://doi.org/10.1242/dev.166728), [Image Data Resource](https://doi.org/10.1038/nmeth.4326)).
+
 ### Write to Parquet
 
 ```python

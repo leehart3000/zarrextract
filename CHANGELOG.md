@@ -13,6 +13,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   the brand colours in the documentation theme.
 - Documentation built with Sphinx for Read the Docs, with a user guide, an API
   reference and the two example notebooks.
+- A third demo notebook, `notebooks/ome_zarr_idr0051.ipynb`, that reads a
+  pixel time series and a 2D slice of an OME-Zarr light-sheet image from the
+  Image Data Resource over HTTPS.
 - The `noleap` and `365_day` calendars (the same calendar), which most CMIP6
   models use, for example CESM2 with `days since 0001-01-01`. The times decode
   to ordinary `datetime64` dates, and selections use ordinary dates. A
