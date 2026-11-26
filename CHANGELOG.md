@@ -19,6 +19,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- In a time `(start, stop)` range, an ISO string given only to the year,
+  month or day now covers that whole period, as in pandas and xarray. For
+  example a stop of `"2019-06-30"` includes every time on that day, where it
+  used to mean midnight and dropped values stamped later in the day. Strings
+  with a time of day, `datetime` and `datetime64` values, and scalar
+  selections, are unchanged.
+- The API reference shows the public classes and exceptions as
+  `zarrextract.X`, not by their private module paths.
 - The `UnsupportedCalendarError` message now names the supported calendars.
   Other calendars, such as `360_day`, `all_leap` and `julian`, still raise it.
 

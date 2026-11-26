@@ -53,6 +53,13 @@ def extract(
     across the seam (350 to 359.75, then 0 to 10). Time selections can be ISO
     strings, ``datetime`` or ``numpy.datetime64``.
 
+    In a time ``(start, stop)`` range, an ISO string given only to the year,
+    month or day covers that whole period, as in pandas and xarray:
+    ``("2019-06", "2019-06")`` is all of June 2019, and a stop of
+    ``"2019-06-30"`` includes every time on that day. A start of ``"2019-06"``
+    means the start of June. Strings with a time of day, ``datetime`` and
+    ``datetime64`` values mean exactly that moment, and so does a scalar.
+
     CF time coordinates (``"<unit> since <date>"`` with the standard,
     gregorian, proleptic_gregorian, noleap or 365_day calendar) become Arrow
     timestamps whose unit is ``s``, ``ms`` or ``us`` to match the time units.

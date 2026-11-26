@@ -2,7 +2,7 @@
 
 import math
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from typing import Any
@@ -74,7 +74,7 @@ def select(axis: Axis | LazyAxis, selection: Selection) -> Indices:
                 f"The selection for {axis.name!r} must be a single value or a "
                 f"(start, stop) pair, not {len(selection)} values."
             )
-        start, stop = (_to_number(axis, v) for v in selection)
+        start, stop = _range_ends(axis, selection)
         return _select_range(axis, coords, start, stop)
     return _select_nearest(axis, coords, _to_number(axis, selection), increasing)
 
@@ -125,6 +125,43 @@ def _parse_iso(text: str) -> np.datetime64:
 
 def _to_ticks(axis: Axis | LazyAxis, value: object) -> int:
     """Convert a time selection to integer ticks in the axis resolution."""
+    return _ticks(axis, _to_moment(axis, value))
+
+
+def _ticks(axis: Axis | LazyAxis, moment: np.datetime64) -> int:
+    unit, _ = np.datetime_data(axis.dtype)
+    return int(moment.astype(f"datetime64[{unit}]").astype(np.int64))
+
+
+def _bounds(axis: Axis | LazyAxis, value: object) -> tuple[int, int]:
+    """Return the first and last tick that a range end covers.
+
+    An ISO string given only to the year, month or day covers that whole
+    period. Anything else covers the single tick it names.
+    """
+    moment = _to_moment(axis, value)
+    first = _ticks(axis, moment)
+    unit: Any = np.datetime_data(moment.dtype)[0]
+    if isinstance(value, str) and unit in ("Y", "M", "D"):
+        return first, _ticks(axis, moment + np.timedelta64(1, unit)) - 1
+    return first, first
+
+
+def _range_ends(axis: Axis | LazyAxis, selection: Sequence[object]) -> tuple[Any, Any]:
+    """Return the numeric ``(start, stop)`` of a range selection."""
+    if not axis.is_time:
+        start, stop = (_to_number(axis, v) for v in selection)
+        return start, stop
+    (first_low, first_high), (last_low, last_high) = (
+        _bounds(axis, v) for v in selection
+    )
+    if first_low > last_low:
+        # Given the wrong way round: the range still runs from low to high.
+        return first_high, last_low
+    return first_low, last_high
+
+
+def _to_moment(axis: Axis | LazyAxis, value: object) -> np.datetime64:
     moment: np.datetime64
     if isinstance(value, np.datetime64):
         moment = value
@@ -143,8 +180,7 @@ def _to_ticks(axis: Axis | LazyAxis, value: object) -> int:
         )
     if np.isnat(moment):
         raise SelectionError(f"The selection for {axis.name!r} is not a valid time.")
-    unit, _ = np.datetime_data(axis.dtype)
-    return int(moment.astype(f"datetime64[{unit}]").astype(np.int64))
+    return moment
 
 
 def _to_number(axis: Axis | LazyAxis, value: object) -> float:
@@ -314,7 +350,7 @@ def _select_lazy(axis: LazyAxis, selection: Selection) -> Indices:
                 f"The selection for {axis.name!r} must be a single value or a "
                 f"(start, stop) pair, not {len(selection)} values."
             )
-        start, stop = (_to_number(axis, v) for v in selection)
+        start, stop = _range_ends(axis, selection)
         tolerance = (
             _TOLERANCE * float(min(step_at_start, step_at_end))
             if low.dtype.kind == "f"

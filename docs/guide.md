@@ -88,6 +88,13 @@ CF time coordinates (`"<unit> since <date>"`) become Arrow timestamps. Time
 selections can be ISO strings, `datetime` objects or `numpy.datetime64`
 values.
 
+- **Partial dates:** in a `(start, stop)` range, an ISO string given only to
+  the year, month or day covers that whole period, as in pandas and xarray.
+  `("2019-06", "2019-06")` is all of June, and a stop of `"2019-06-30"`
+  includes every time on that day, even if the values are stamped at 09:00. A
+  start of `"2019-06"` means the start of June. Strings with a time of day,
+  `datetime` and `datetime64` values mean exactly that moment, and so does a
+  scalar, which picks the nearest value.
 - **Units:** days, hours, minutes, seconds, milliseconds and microseconds,
   and their usual abbreviations. The reference date must be in UTC.
 - **Calendars:** `standard`, `gregorian`, `proleptic_gregorian`, `noleap` and

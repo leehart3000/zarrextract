@@ -36,3 +36,9 @@ __all__ = [
     "describe",
     "extract",
 ]
+
+# Show the public names as zarrextract.X, not by their private module paths.
+for _name in __all__:
+    if _name != "__version__":
+        globals()[_name].__module__ = __name__
+del _name

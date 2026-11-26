@@ -326,6 +326,140 @@ def test_29_february_on_a_noleap_axis_picks_the_nearest_value(
     assert ranged["v"].to_pylist() == [1.0, 2.0]
 
 
+# --- partial dates in ranges -------------------------------------------------
+
+
+def stamped_line(
+    tmp_path: Path,
+    zarr_format: ZarrFormat,
+    *,
+    descending: bool = False,
+    calendar: str = "standard",
+) -> tuple[Path, np.ndarray[Any, Any]]:
+    """A daily axis from 2019-01-01, stamped at 09:00 (730 days, 146 chunks)."""
+    hours = 24 * np.arange(730) + 9
+    if descending:
+        hours = hours[::-1]
+    path = make_line(
+        tmp_path / "t.zarr",
+        zarr_format,
+        "time",
+        hours,
+        {"units": "hours since 2019-01-01", "calendar": calendar},
+    )
+    days = np.datetime64("2019-01-01T09:00:00") + 24 * np.arange(730) * np.timedelta64(
+        1, "h"
+    )
+    return path, days[::-1] if descending else days
+
+
+def rows(table: pa.Table | tuple[type, str]) -> list[dt.datetime]:
+    assert isinstance(table, pa.Table)
+    times: list[dt.datetime] = table["time"].to_pylist()
+    return times
+
+
+PARTIAL_RANGES = [
+    # Both ends to the day: the stop day is included although it is stamped 09:00.
+    (("2019-06-01", "2019-06-30"), "2019-06-01T09", "2019-06-30T09"),
+    (("2019-06-30", "2019-06-30"), "2019-06-30T09", "2019-06-30T09"),
+    # Months: the stop month is whole, and the start month starts on the 1st.
+    (("2019-06", "2019-06"), "2019-06-01T09", "2019-06-30T09"),
+    (("2019-06", "2019-08"), "2019-06-01T09", "2019-08-31T09"),
+    (("2019-06-15", "2019-08"), "2019-06-15T09", "2019-08-31T09"),
+    (("2019-06", "2019-08-10"), "2019-06-01T09", "2019-08-10T09"),
+    # Years.
+    (("2019", "2019"), "2019-01-01T09", "2019-12-31T09"),
+    (("2019-12", "2020"), "2019-12-01T09", "2020-12-30T09"),
+    # A time of day keeps its exact meaning.
+    (("2019-06-01", "2019-06-30T00:00"), "2019-06-01T09", "2019-06-29T09"),
+    (("2019-06-01T10:00", "2019-06-30T09:00"), "2019-06-02T09", "2019-06-30T09"),
+    (("2019-06-01", "2019-06-30T08"), "2019-06-01T09", "2019-06-29T09"),
+    # Given the wrong way round still covers both periods.
+    (("2019-06-30", "2019-06-01"), "2019-06-01T09", "2019-06-30T09"),
+    (("2019-08", "2019-06"), "2019-06-01T09", "2019-08-31T09"),
+]
+
+
+@pytest.mark.parametrize(("selection", "first", "last"), PARTIAL_RANGES)
+@pytest.mark.parametrize("descending", [False, True], ids=["up", "down"])
+def test_partial_dates_cover_the_whole_period(
+    tmp_path: Path,
+    zarr_format: ZarrFormat,
+    selection: tuple[str, str],
+    first: str,
+    last: str,
+    descending: bool,
+) -> None:
+    path, days = stamped_line(tmp_path, zarr_format, descending=descending)
+    low, high = np.datetime64(first), np.datetime64(last)
+    expected = days[(days >= low) & (days <= high)]
+
+    # The default threshold reads 146 chunks by bisection; the other reads whole.
+    assert_same(path, {"time": selection})
+    assert rows(run(path, {"time": selection})) == expected.astype(object).tolist()
+
+
+def test_a_june_range_on_a_09_00_axis_has_30_days(
+    tmp_path: Path, zarr_format: ZarrFormat
+) -> None:
+    path, _ = stamped_line(tmp_path, zarr_format)
+
+    assert len(rows(run(path, {"time": ("2019-06-01", "2019-06-30")}))) == 30
+    assert len(rows(run(path, {"time": ("2019-06", "2019-06")}))) == 30
+
+
+@pytest.mark.parametrize(
+    "stop",
+    [
+        np.datetime64("2019-06-30"),
+        dt.date(2019, 6, 30),
+        dt.datetime(2019, 6, 30),
+        "2019-06-30T00:00:00",
+    ],
+    ids=["datetime64", "date", "datetime", "string-with-time"],
+)
+def test_other_kinds_of_stop_keep_their_exact_meaning(
+    tmp_path: Path, zarr_format: ZarrFormat, stop: Any
+) -> None:
+    path, _ = stamped_line(tmp_path, zarr_format)
+
+    assert_same(path, {"time": ("2019-06-01", stop)})
+    table = rows(run(path, {"time": ("2019-06-01", stop)}))
+    assert table[-1] == dt.datetime(2019, 6, 29, 9)
+
+
+def test_a_scalar_partial_date_still_picks_the_nearest_value(
+    tmp_path: Path, zarr_format: ZarrFormat
+) -> None:
+    path, _ = stamped_line(tmp_path, zarr_format)
+
+    for selection in ("2019-06-30", "2019-06", "2019"):
+        assert_same(path, {"time": selection})
+        assert len(rows(run(path, {"time": selection}))) == 1
+    # Midnight is nearer to 09:00 that day than to 09:00 the day before.
+    assert rows(run(path, {"time": "2019-06-30"})) == [dt.datetime(2019, 6, 30, 9)]
+    assert rows(run(path, {"time": "2019-06"})) == [dt.datetime(2019, 6, 1, 9)]
+
+
+def test_partial_dates_on_a_noleap_axis(
+    tmp_path: Path, zarr_format: ZarrFormat
+) -> None:
+    # In the noleap calendar 2019 and 2020 have 365 days each, so the times
+    # decode to ordinary dates and 2020 has no 29 February.
+    path, _ = stamped_line(tmp_path, zarr_format, calendar="noleap")
+
+    for selection in (("2020", "2020"), ("2020-01", "2020-12-31")):
+        assert_same(path, {"time": selection})
+        year = rows(run(path, {"time": selection}))
+        assert len(year) == 365
+        assert year[0] == dt.datetime(2020, 1, 1, 9)
+        assert year[-1] == dt.datetime(2020, 12, 31, 9)
+    february = rows(run(path, {"time": ("2020-02", "2020-02")}))
+    assert len(february) == 28
+    assert february[-1] == dt.datetime(2020, 2, 28, 9)
+
+
 # --- reading only what is needed ---------------------------------------------
 
 

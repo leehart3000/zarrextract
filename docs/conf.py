@@ -27,6 +27,9 @@ myst_heading_anchors = 3
 # Show the outputs saved in the notebooks. Nothing is run.
 nb_execution_mode = "off"
 
+# Show the "Attributes:" sections of the classes as a list.
+napoleon_use_ivar = True
+
 autodoc_typehints = "description"
 autodoc_member_order = "bysource"
 

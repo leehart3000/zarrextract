@@ -13,32 +13,45 @@ from zarrextract._store import dimension_names, open_group
 
 @dataclass(frozen=True, slots=True)
 class ArrayInfo:
-    """Metadata for one array in a store."""
+    """Metadata for one array in a store.
+
+    Attributes:
+        name: The array's path from the store.
+        dimensions: Dimension names, or ``None`` if the array does not record
+            them.
+        shape: The length of each dimension.
+        chunks: The chunk length along each dimension.
+        dtype: The data type, as a string.
+        is_coordinate: True for a 1-D array named after its own single
+            dimension.
+    """
 
     name: str
     dimensions: tuple[str, ...] | None
-    """Dimension names, or ``None`` if the array does not record them."""
     shape: tuple[int, ...]
     chunks: tuple[int, ...]
     dtype: str
     is_coordinate: bool
-    """True for a 1-D array named after its own single dimension."""
 
 
 @dataclass(frozen=True, slots=True)
 class StoreDescription:
-    """The arrays of a store, sorted by name (their path from the store)."""
+    """The arrays of a store, sorted by name (their path from the store).
+
+    Attributes:
+        arrays: Every array in the store.
+        coordinates: The 1-D coordinate arrays.
+        data_variables: Every array that is not a coordinate.
+    """
 
     arrays: tuple[ArrayInfo, ...]
 
     @property
     def coordinates(self) -> tuple[ArrayInfo, ...]:
-        """The 1-D coordinate arrays."""
         return tuple(a for a in self.arrays if a.is_coordinate)
 
     @property
     def data_variables(self) -> tuple[ArrayInfo, ...]:
-        """Every array that is not a coordinate."""
         return tuple(a for a in self.arrays if not a.is_coordinate)
 
     def __iter__(self) -> Iterator[ArrayInfo]:
@@ -112,6 +125,7 @@ def describe(
     Raises:
         StoreOpenError: The store cannot be opened or listed, or the server
             or the connection fails.
+        ValueError: ``max_depth`` is negative.
     """
     if max_depth is not None and max_depth < 0:
         raise ValueError(f"max_depth must be None or >= 0, not {max_depth}")
