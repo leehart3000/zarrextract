@@ -1,13 +1,15 @@
 # CI for zarrextract: checks on every push and merge request, and a release
 # to PyPI (Trusted Publishing, with attestations) on version tags vX.Y.Z.
 
+# Routine checks on every push run on GitHub Actions on the mirror
+# (.github/workflows/ci.yml), which is free for public repositories.
+# GitLab runs pipelines only for tags (releases), schedules and manual runs,
+# to save compute minutes.
 workflow:
   rules:
-    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
-    - if: $CI_COMMIT_BRANCH && $CI_OPEN_MERGE_REQUESTS
-      when: never
-    - if: $CI_COMMIT_BRANCH
     - if: $CI_COMMIT_TAG
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+    - if: $CI_PIPELINE_SOURCE == "web"
 
 stages:
   - check
