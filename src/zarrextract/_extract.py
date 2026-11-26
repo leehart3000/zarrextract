@@ -55,14 +55,13 @@ def extract(
 
     CF time coordinates (``"<unit> since <date>"`` with the standard,
     gregorian, proleptic_gregorian, noleap or 365_day calendar) become Arrow
-    timestamps whose
-    unit is ``s``, ``ms`` or ``us`` to match the time units. ``scale_factor``
-    and ``add_offset`` are applied, and ``_FillValue`` and ``missing_value``
-    become nulls. In Zarr v2 so does the fill value in the array metadata, as
-    in xarray; in Zarr v3 only the attributes count. Only the chunks that
-    overlap the selection are read. A selected coordinate with more than 8
-    chunks is searched by bisection, which reads about one chunk per halving
-    instead of the whole coordinate.
+    timestamps whose unit is ``s``, ``ms`` or ``us`` to match the time units.
+    ``scale_factor`` and ``add_offset`` are applied, and ``_FillValue`` and
+    ``missing_value`` become nulls. In Zarr v2 so does the fill value in the
+    array metadata, as in xarray; in Zarr v3 only the attributes count. Only
+    the chunks that overlap the selection are read. A selected coordinate with
+    more than 8 chunks is searched by bisection, which reads about one chunk
+    per halving instead of the whole coordinate.
 
     ``storage_options`` is not a selection. It is passed to the fsspec backend,
     for example ``{"anon": True}`` to read a public S3 bucket without

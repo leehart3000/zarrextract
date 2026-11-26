@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- Documentation built with Sphinx for Read the Docs, with a user guide, an API
+  reference and the two example notebooks.
 - The `noleap` and `365_day` calendars (the same calendar), which most CMIP6
   models use, for example CESM2 with `days since 0001-01-01`. The times decode
   to ordinary `datetime64` dates, and selections use ordinary dates. A

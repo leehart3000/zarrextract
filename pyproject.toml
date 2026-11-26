@@ -28,6 +28,7 @@ s3 = ["s3fs"]
 http = ["fsspec", "aiohttp"]
 
 [project.urls]
+Documentation = "https://zarrextract.readthedocs.io"
 Homepage = "https://gitlab.com/leehart3000/zarrextract"
 Source = "https://gitlab.com/leehart3000/zarrextract"
 Issues = "https://gitlab.com/leehart3000/zarrextract/-/issues"
@@ -74,4 +75,9 @@ dev = [
     "mypy (>=2.4.1,<3.0.0)",
     "ruff (>=0.17.6,<0.18.0)",
     "fsspec"
+]
+docs = [
+    "sphinx",
+    "furo",
+    "myst-nb"
 ]

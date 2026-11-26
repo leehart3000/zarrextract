@@ -5,7 +5,8 @@ into Apache Arrow tables. It is a lighter alternative to
 `xarray.open_zarr(...).sel(...)` for the common case where you only want a
 small piece of a large store, and it needs only `zarr`, `pyarrow` and `numpy`.
 
-It requires Python 3.12 or newer.
+It requires Python 3.12 or newer. Read the
+[documentation](https://zarrextract.readthedocs.io) for the full guide.
 
 ```bash
 pip install zarrextract
