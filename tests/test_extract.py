@@ -528,10 +528,10 @@ def test_unsupported_calendar_raises(tmp_path: Path, zarr_format: ZarrFormat) ->
     store = make_grid(
         tmp_path / "g.zarr",
         zarr_format,
-        time_attrs={"units": "days since 2000-01-01", "calendar": "noleap"},
+        time_attrs={"units": "days since 2000-01-01", "calendar": "360_day"},
     )
 
-    with pytest.raises(zarrextract.UnsupportedCalendarError, match="noleap"):
+    with pytest.raises(zarrextract.UnsupportedCalendarError, match="360_day"):
         extract(store, "temp", lat=0, lon=0)
 
 

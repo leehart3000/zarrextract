@@ -145,11 +145,144 @@ def test_supported_calendars(calendar: str | None) -> None:
 
 @pytest.mark.parametrize(
     "calendar",
-    ["noleap", "365_day", "all_leap", "366_day", "360_day", "julian", "none", "", 5],
+    ["all_leap", "366_day", "360_day", "julian", "none", "", 5],
 )
 def test_unsupported_calendars(calendar: object) -> None:
-    with pytest.raises(UnsupportedCalendarError, match="calendar"):
+    with pytest.raises(UnsupportedCalendarError, match="noleap and 365_day"):
         decode_time(np.array([1]), "days since 2000-01-01", calendar)
+
+
+@pytest.mark.parametrize("calendar", ["noleap", "365_day", "NoLeap"])
+@pytest.mark.parametrize(
+    ("units", "values", "expected"),
+    [
+        # 28 February to 1 March, in a leap year of the Gregorian calendar too.
+        (
+            "days since 2000-02-27",
+            [0, 1, 2, 3],
+            ["2000-02-27", "2000-02-28", "2000-03-01", "2000-03-02"],
+        ),
+        # Year ends, and a reference that is not at the start of the day.
+        (
+            "days since 2001-12-31",
+            [0, 1, 365],
+            ["2001-12-31", "2002-01-01", "2002-12-31"],
+        ),
+        (
+            "hours since 2001-12-31 18:00:00",
+            [0, 6, 7, 24 * 365],
+            [
+                "2001-12-31T18:00",
+                "2002-01-01T00:00",
+                "2002-01-01T01:00",
+                "2002-12-31T18:00",
+            ],
+        ),
+        # CESM2: the first day of year 1 and the end of year 1.
+        (
+            "days since 0001-01-01",
+            [0, 31, 59, 364, 365],
+            [
+                "0001-01-01",
+                "0001-02-01",
+                "0001-03-01",
+                "0001-12-31",
+                "0002-01-01",
+            ],
+        ),
+        # 2000 would have a 29 February: day 59 of 2000 is 1 March.
+        (
+            "days since 2000-01-01",
+            [58, 59, 365],
+            ["2000-02-28", "2000-03-01", "2001-01-01"],
+        ),
+        # Years before 1582 are fine, and so are negative offsets.
+        ("days since 1500-03-01", [-1, 0], ["1500-02-28", "1500-03-01"]),
+        ("days since 1850-01-01", [-1, 150 * 365], ["1849-12-31", "2000-01-01"]),
+        (
+            "minutes since 2000-03-01 00:00:00",
+            [-1, 1440],
+            ["2000-02-28T23:59", "2000-03-02"],
+        ),
+        (
+            "seconds since 2000-01-01",
+            [86399, 86400],
+            ["2000-01-01T23:59:59", "2000-01-02"],
+        ),
+    ],
+)
+def test_decode_noleap(
+    calendar: str, units: str, values: list[int], expected: list[str]
+) -> None:
+    decoded = decode_time(np.array(values), units, calendar)
+
+    assert decoded.dtype == np.dtype("datetime64[s]")
+    assert np.array_equal(decoded, seconds(*expected))
+
+
+def test_decode_noleap_floats_and_nan() -> None:
+    decoded = decode_time(
+        np.array([0.5, 59.25, np.nan, np.inf]), "days since 2000-01-01", "noleap"
+    )
+
+    assert decoded[0] == np.datetime64("2000-01-01T12:00:00")
+    assert decoded[1] == np.datetime64("2000-03-01T06:00:00")
+    assert np.isnat(decoded[2:]).all()
+
+
+def test_decode_noleap_resolutions() -> None:
+    milli = decode_time(
+        np.array([1500, 86400000]), "milliseconds since 2000-02-28", "noleap"
+    )
+    micro = decode_time(np.array([1500]), "microseconds since 2000-02-28", "365_day")
+
+    assert milli.dtype == np.dtype("datetime64[ms]")
+    assert milli[0] == np.datetime64("2000-02-28T00:00:01.500", "ms")
+    assert milli[1] == np.datetime64("2000-03-01T00:00:00.000", "ms")
+    assert micro.dtype == np.dtype("datetime64[us]")
+    assert micro[0] == np.datetime64("2000-02-28T00:00:00.001500", "us")
+
+
+def test_decode_noleap_matches_a_day_by_day_count() -> None:
+    # Count the days of 300 years without 29 February, starting at year 1.
+    days = np.arange(300 * 365)
+    decoded = decode_time(days, "days since 0001-01-01", "noleap")
+
+    gregorian = np.arange(
+        np.datetime64("0001-01-01"), np.datetime64("0301-01-01"), np.timedelta64(1, "D")
+    )
+    month_start = gregorian.astype("datetime64[M]")
+    is_leap_day = (month_start.astype(int) % 12 == 1) & (
+        (gregorian - month_start.astype("datetime64[D]")).astype(int) == 28
+    )
+    expected = gregorian[~is_leap_day].astype("datetime64[s]")
+    assert expected.size == days.size
+    assert np.array_equal(decoded, expected)
+    assert (np.diff(decoded) > np.timedelta64(0, "s")).all()
+
+
+def test_decode_noleap_is_ordered_across_days_and_units() -> None:
+    values = np.arange(-1000, 5000, 7)
+    decoded = decode_time(values, "hours since 1999-12-31 12:00", "noleap")
+
+    assert (np.diff(decoded) > np.timedelta64(0, "s")).all()
+
+
+@pytest.mark.parametrize(
+    "units", ["days since 2000-02-29", "days since 1996-02-29 06:00"]
+)
+@pytest.mark.parametrize("calendar", ["noleap", "365_day"])
+def test_decode_noleap_rejects_a_reference_on_29_february(
+    units: str, calendar: str
+) -> None:
+    with pytest.raises(TimeDecodingError, match="29 February"):
+        decode_time(np.array([0]), units, calendar)
+
+
+def test_noleap_does_not_have_the_gregorian_cutover() -> None:
+    decoded = decode_time(np.array([0]), "days since 0001-01-01", "noleap")
+
+    assert decoded[0] == np.datetime64("0001-01-01")
 
 
 def test_unsupported_calendar_is_a_time_decoding_error() -> None:

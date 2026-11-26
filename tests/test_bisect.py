@@ -133,6 +133,25 @@ CASES: dict[str, Case] = {
         {"units": "days since 2000-01-01"},
         _days,
     ),
+    # 60 days from 2000-02-10 cross a Gregorian 29 February, which noleap skips.
+    "time-noleap": (
+        "time",
+        np.arange(0, 60),
+        {"units": "days since 2000-02-10", "calendar": "noleap"},
+        _days,
+    ),
+    "time-365-day-hours-float": (
+        "time",
+        np.arange(0.0, 24 * 60, 6.0),
+        {"units": "hours since 1999-12-20 00:00:00", "calendar": "365_day"},
+        _days,
+    ),
+    "time-noleap-descending": (
+        "time",
+        np.arange(60, 0, -1),
+        {"units": "days since 2000-02-10", "calendar": "noleap"},
+        _days,
+    ),
     "lon-0-360-global": (
         "lon",
         np.arange(0.0, 360.0, 5.0),
@@ -282,6 +301,29 @@ def test_a_selected_range_of_dates_gives_the_right_rows(
 
     assert isinstance(table, pa.Table)
     assert table["v"].to_pylist() == [10.0, 11.0, 12.0]
+
+
+def test_29_february_on_a_noleap_axis_picks_the_nearest_value(
+    tmp_path: Path, zarr_format: ZarrFormat
+) -> None:
+    # The values are 27 and 28 February, then 1 and 2 March, and so on.
+    path = make_line(
+        tmp_path / "t.zarr",
+        zarr_format,
+        "time",
+        np.arange(0, 60),
+        {"units": "days since 2000-02-27", "calendar": "noleap"},
+    )
+
+    for selection in ("2000-02-29", "2000-02-29T00:00:00Z"):
+        assert_same(path, {"time": selection})
+        table = run(path, {"time": selection})
+        assert isinstance(table, pa.Table)
+        # 29 February is a day away from both neighbours, and the earlier wins.
+        assert table["time"].to_pylist() == [dt.datetime(2000, 2, 28)]
+    ranged = run(path, {"time": ("2000-02-28", "2000-03-01")})
+    assert isinstance(ranged, pa.Table)
+    assert ranged["v"].to_pylist() == [1.0, 2.0]
 
 
 # --- reading only what is needed ---------------------------------------------

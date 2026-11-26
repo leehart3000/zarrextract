@@ -43,8 +43,12 @@ _OFFSET_RE = re.compile(r"([+-])(\d{2})(?::?(\d{2}))?")
 _TICK_LIMIT = 2**62
 
 _MIXED_CALENDARS = {"standard", "gregorian"}
-_SUPPORTED_CALENDARS = _MIXED_CALENDARS | {"proleptic_gregorian"}
+_NOLEAP_CALENDARS = {"noleap", "365_day"}
+_SUPPORTED_CALENDARS = _MIXED_CALENDARS | {"proleptic_gregorian"} | _NOLEAP_CALENDARS
 _GREGORIAN_START = np.datetime64("1582-10-15", "us")
+
+# Days before the start of each month in a year without 29 February.
+_NOLEAP_MONTH_STARTS = np.cumsum([0, 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30])
 
 _LONGITUDE_UNITS = {
     "degrees_east",
@@ -120,9 +124,51 @@ def _check_calendar(calendar: object) -> str:
     if name not in _SUPPORTED_CALENDARS:
         raise UnsupportedCalendarError(
             f"Unsupported calendar {calendar!r}. Supported calendars are standard, "
-            "gregorian and proleptic_gregorian."
+            "gregorian, proleptic_gregorian, noleap and 365_day."
         )
     return name
+
+
+def _decode_noleap(
+    ticks: NDArray[np.int64], reference: np.datetime64, resolution: str
+) -> NDArray[np.datetime64]:
+    """Add ``ticks`` to ``reference`` in a calendar without 29 February.
+
+    Every date in that calendar is also a valid Gregorian date, so the result is
+    an ordinary ``datetime64``. ``reference`` and the ticks have the resolution
+    ``resolution``.
+    """
+    unit_type = f"datetime64[{resolution}]"
+    ref_day = reference.astype("datetime64[D]")
+    ref_month = reference.astype("datetime64[M]")
+    month = int(ref_month.astype(np.int64)) % 12
+    day = int((ref_day - ref_month.astype("datetime64[D]")).astype(np.int64))
+    if month == 1 and day == 28:
+        raise TimeDecodingError(
+            f"The reference date {reference} is 29 February, which does not exist "
+            "in the noleap calendar."
+        )
+    year = int(reference.astype("datetime64[Y]").astype(np.int64)) + 1970
+    ref_days = year * 365 + int(_NOLEAP_MONTH_STARTS[month]) + day
+    time_of_day = int((reference - ref_day.astype(unit_type)).astype(np.int64))
+
+    per_day = 86400 * {"s": 1, "ms": 1000, "us": 1_000_000}[resolution]
+    total = ticks + (ref_days * per_day + time_of_day)
+    days, in_day = np.divmod(total, per_day)
+    years, day_of_year = np.divmod(days, 365)
+    months = np.searchsorted(_NOLEAP_MONTH_STARTS, day_of_year, side="right") - 1
+    day_of_month = day_of_year - _NOLEAP_MONTH_STARTS[months]
+
+    start_of_month = (years - 1970).astype("datetime64[Y]").astype(
+        "datetime64[M]"
+    ) + months.astype("timedelta64[M]")
+    dates = start_of_month.astype("datetime64[D]") + day_of_month.astype(
+        "timedelta64[D]"
+    )
+    decoded: NDArray[np.datetime64] = dates.astype(unit_type) + in_day.astype(
+        f"timedelta64[{resolution}]"
+    )
+    return decoded
 
 
 def decode_time(
@@ -170,9 +216,11 @@ def decode_time(
                 raise TimeDecodingError(f"Time values in {units!r} are out of range.")
         ticks = integers * factor
 
-    decoded: NDArray[np.datetime64] = reference_res + ticks.astype(
-        f"timedelta64[{resolution}]"
-    )
+    decoded: NDArray[np.datetime64]
+    if name in _NOLEAP_CALENDARS:
+        decoded = _decode_noleap(ticks, reference_res, resolution)
+    else:
+        decoded = reference_res + ticks.astype(f"timedelta64[{resolution}]")
     if finite is not None:
         decoded[~finite] = np.array("NaT", dtype=unit_type)
     if mixed:

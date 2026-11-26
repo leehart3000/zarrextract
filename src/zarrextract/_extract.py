@@ -54,7 +54,8 @@ def extract(
     strings, ``datetime`` or ``numpy.datetime64``.
 
     CF time coordinates (``"<unit> since <date>"`` with the standard,
-    gregorian or proleptic_gregorian calendar) become Arrow timestamps whose
+    gregorian, proleptic_gregorian, noleap or 365_day calendar) become Arrow
+    timestamps whose
     unit is ``s``, ``ms`` or ``us`` to match the time units. ``scale_factor``
     and ``add_offset`` are applied, and ``_FillValue`` and ``missing_value``
     become nulls. In Zarr v2 so does the fill value in the array metadata, as

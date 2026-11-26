@@ -138,8 +138,10 @@ table = zx.extract(
 
 ## Limitations
 
-- Only the `standard`, `gregorian` and `proleptic_gregorian` calendars are
-  supported, and `standard` or `gregorian` dates before 1582-10-15 are not.
+- Only the `standard`, `gregorian`, `proleptic_gregorian`, `noleap` and
+  `365_day` calendars are supported, and `standard` or `gregorian` dates
+  before 1582-10-15 are not. Other calendars, such as `360_day`, `all_leap`
+  and `julian`, raise `UnsupportedCalendarError`.
 - Coordinates are looked up at the top level of the store, so arrays in nested
   groups are selected by index unless the store has a top-level coordinate
   of the same name.
