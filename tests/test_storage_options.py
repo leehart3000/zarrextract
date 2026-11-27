@@ -65,6 +65,15 @@ def test_describe_passes_storage_options(memory_store: str) -> None:
     assert any(options.get("marker") == 2 for options in received)
 
 
+def test_open_passes_storage_options_and_does_not_keep_them(memory_store: str) -> None:
+    with zarrextract.open(memory_store, storage_options={"marker": 3}) as src:
+        assert src.extract("temp", time=0).num_rows == 8
+
+        assert any(options.get("marker") == 3 for options in received)
+        assert "marker" not in repr(src)
+        assert "marker" not in repr(vars(src)["_target"])
+
+
 def test_storage_options_is_not_a_dimension(memory_store: str) -> None:
     with pytest.raises(zarrextract.UnknownDimensionError):
         extract(memory_store, "temp", nosuchdim=1)

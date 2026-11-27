@@ -11,6 +11,7 @@ from zarrextract._errors import (
     OmeMetadataWarning,
     OutputExistsError,
     SelectionError,
+    SourceClosedError,
     StoreOpenError,
     TimeDecodingError,
     UnknownDimensionError,
@@ -32,6 +33,8 @@ from zarrextract._ome import (
     OmeWell,
 )
 from zarrextract._provenance import Provenance, provenance
+from zarrextract._source import Source
+from zarrextract._source import open as open
 from zarrextract._write import write
 
 __version__ = version("zarrextract")
@@ -54,6 +57,8 @@ __all__ = [
     "OutputExistsError",
     "Provenance",
     "SelectionError",
+    "Source",
+    "SourceClosedError",
     "StoreDescription",
     "StoreOpenError",
     "TimeDecodingError",
@@ -75,3 +80,7 @@ for _name in __all__:
     if _name != "__version__":
         globals()[_name].__module__ = __name__
 del _name
+
+# open() is not in __all__, so that "from zarrextract import *" does not replace
+# the built-in open().
+open.__module__ = __name__

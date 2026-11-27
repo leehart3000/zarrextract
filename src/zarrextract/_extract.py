@@ -10,6 +10,7 @@ import pyarrow as pa
 import zarr
 from numpy.typing import NDArray
 
+from zarrextract._cache import AxisEntry, Cache
 from zarrextract._cf import decode_time, is_longitude, is_time_units, unpack
 from zarrextract._errors import (
     MissingDimensionNamesError,
@@ -18,9 +19,9 @@ from zarrextract._errors import (
     ZarrExtractError,
 )
 from zarrextract._probe import LazyAxis
-from zarrextract._provenance import field_metadata, provenance_metadata
+from zarrextract._provenance import field_metadata
 from zarrextract._select import Axis, Selection, check_finite, select
-from zarrextract._store import call_wrapped, dimension_names, open_group
+from zarrextract._store import dimension_names
 
 BISECT_MIN_CHUNKS = 8
 """Selected coordinates with more chunks than this are searched by bisection."""
@@ -85,6 +86,10 @@ def extract(
     for example ``{"anon": True}`` to read a public S3 bucket without
     credentials, so a dimension cannot be called ``storage_options``.
 
+    Each call opens the store again. To make many selections from one store,
+    open it once with ``open()`` and call ``Source.extract()``, which gives the
+    same tables.
+
     Raises:
         StoreOpenError: The store cannot be opened, or the server or the
             connection fails while it is read.
@@ -97,58 +102,68 @@ def extract(
             ``UnsupportedCalendarError`` is a subclass.
     """
     check_finite(selections)
-    target = os.fspath(store)
+    # Imported here because _source imports this module.
+    from zarrextract._source import open as open_source
 
-    def run() -> pa.Table:
-        table = _extract_from_group(
-            open_group(store, storage_options), variable, selections
+    with open_source(store, storage_options=storage_options) as source:
+        return source.extract(variable, **selections)
+
+
+def _find_array(cache: Cache, variable: str) -> "zarr.Array[Any]":
+    node = cache.node(variable)
+    if node is None:
+        available = (
+            ", ".join(sorted(name for name, _ in cache.group.arrays())) or "none"
         )
-        return table.replace_schema_metadata(
-            provenance_metadata(target, variable, selections)
-        )
-
-    return call_wrapped(target, run)
-
-
-def _find_array(group: zarr.Group, variable: str) -> "zarr.Array[Any]":
-    try:
-        node = group[variable]
-    except KeyError:
-        available = ", ".join(sorted(name for name, _ in group.arrays())) or "none"
         raise VariableNotFoundError(
             f"No array named {variable!r} in the store. Available arrays: {available}."
-        ) from None
+        )
     if not isinstance(node, zarr.Array):
         raise VariableNotFoundError(f"{variable!r} is a group, not an array.")
     return node
 
 
 def _read_axis(
-    group: zarr.Group, dim: str, length: int, *, selected: bool = False
-) -> tuple[Axis | LazyAxis, dict[str, str] | None]:
+    cache: Cache, dim: str, length: int, *, selected: bool = False
+) -> AxisEntry:
     """Read the coordinate for a dimension, or use its index if it has none.
 
     A selected coordinate with more than ``BISECT_MIN_CHUNKS`` chunks is not read
     here. It comes back as a ``LazyAxis`` that is searched by bisection.
     The second value is the metadata (units and long name) of its Arrow field.
+
+    The result is kept in the cache. A coordinate that is read whole is the
+    same entry whether or not a later call selects on it.
     """
-    try:
-        node = group[dim]
-    except KeyError:
-        node = None
-    if (
-        isinstance(node, zarr.Array)
+    node = cache.node(dim)
+    array = (
+        node
+        if isinstance(node, zarr.Array)
         and node.shape == (length,)
         and dimension_names(node) in (None, (dim,))
-    ):
+        else None
+    )
+    lazy = (
+        selected
+        and array is not None
+        and array.dtype.kind in "iufM"
+        and -(-length // array.chunks[0]) > BISECT_MIN_CHUNKS
+    )
+    key = (dim, length, lazy)
+    found = cache.axes.get(key)
+    if found is None:
+        found = cache.axes.setdefault(key, _build_axis(array, dim, length, lazy=lazy))
+    return found
+
+
+def _build_axis(
+    node: "zarr.Array[Any] | None", dim: str, length: int, *, lazy: bool
+) -> AxisEntry:
+    if node is not None:
         attrs = dict(node.attrs)
         units = attrs.get("units")
         kind = node.dtype.kind
-        if (
-            selected
-            and kind in "iufM"
-            and -(-length // node.chunks[0]) > BISECT_MIN_CHUNKS
-        ):
+        if lazy:
             time_units = kind != "M" and is_time_units(units)
             is_time = kind == "M" or time_units
             return (
@@ -166,21 +181,27 @@ def _read_axis(
             )
         values = np.asarray(node[...])
         if values.dtype.kind == "M":
-            return Axis(dim, values, is_time=True), field_metadata(
+            return Axis(dim, _frozen(values), is_time=True), field_metadata(
                 attrs, decoded_time=True
             )
         if is_time_units(units):
             assert isinstance(units, str)
             decoded = decode_time(values, units, attrs.get("calendar"))
-            return Axis(dim, decoded, is_time=True), field_metadata(
+            return Axis(dim, _frozen(decoded), is_time=True), field_metadata(
                 attrs, decoded_time=True
             )
         if values.dtype.kind == "T":
             values = values.astype(object)
-        return Axis(dim, values, is_longitude=is_longitude(dim, attrs)), field_metadata(
-            attrs, decoded_time=False
-        )
-    return Axis(dim, np.arange(length)), None
+        return Axis(
+            dim, _frozen(values), is_longitude=is_longitude(dim, attrs)
+        ), field_metadata(attrs, decoded_time=False)
+    return Axis(dim, _frozen(np.arange(length))), None
+
+
+def _frozen(values: NDArray[Any]) -> NDArray[Any]:
+    """Make an array read-only: a cached coordinate is shared by later calls."""
+    values.flags.writeable = False
+    return values
 
 
 def _join_indices(parts: tuple[slice, ...]) -> NDArray[np.intp]:
@@ -198,7 +219,15 @@ def _column(values: NDArray[Any], inner: int, outer: int) -> pa.Array:
 def _extract_from_group(
     group: zarr.Group, variable: str, selections: dict[str, Selection]
 ) -> pa.Table:
-    array = _find_array(group, variable)
+    """Extract from a group with nothing remembered, as one call used to."""
+    return extract_from_cache(Cache(group), variable, selections)
+
+
+def extract_from_cache(
+    cache: Cache, variable: str, selections: dict[str, Selection]
+) -> pa.Table:
+    """Extract from an open store, reading only what ``cache`` does not hold."""
+    array = _find_array(cache, variable)
     dims = dimension_names(array)
     if dims is None:
         raise MissingDimensionNamesError(
@@ -219,7 +248,7 @@ def _extract_from_group(
         )
 
     read = [
-        _read_axis(group, dim, length, selected=dim in selections)
+        _read_axis(cache, dim, length, selected=dim in selections)
         for dim, length in zip(dims, array.shape, strict=True)
     ]
     axes = [axis for axis, _ in read]

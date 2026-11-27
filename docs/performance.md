@@ -56,8 +56,14 @@ changed its times by less than 10%.
   in total. The difference is in finding the data, not in reading it.
 - **Many small selections from one open dataset favour xarray.** Once a
   dataset is open, each further xarray selection in cases 1 to 3 took
-  0.3 to 0.9 seconds, while ZarrExtract opens the store on every call.
-  A reusable handle that keeps what it has learned is planned.
+  0.3 to 0.9 seconds. That figure was derived from the totals above (the
+  median time minus the time to open the store), not measured on its own.
+  The timings above are for `zx.extract()`, which opens the store on every
+  call. `zx.open()` keeps the store, the metadata and the coordinates it has
+  read between calls (see {ref}`many-selections`), but these timings were
+  taken before it existed. The benchmark notebook now times repeated
+  selections on one open store for both libraries, and the numbers will be
+  added here after it has been run again.
 - **Dask adds overhead to small reads.** xarray was slower with Dask than
   without it in every case here.
 - **Longitude across the seam.** For London (longitude -0.1) on stores

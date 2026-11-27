@@ -45,6 +45,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   malformed well or label, give the warning and the rest is described.
 - A Performance page in the docs, comparing extraction times with xarray, and
   the saved results of `notebooks/benchmarks.ipynb`.
+- `open(store, *, storage_options=None)` opens a store once and returns a
+  `Source`, for making many selections from it. `Source.extract()` and
+  `Source.describe()` give the same results as the functions, including the
+  provenance, but keep what they have read: the metadata of the arrays, the
+  coordinates read whole (already decoded), the coordinate chunks read while
+  searching a long coordinate by bisection, and the result of `describe()`.
+  The chunks of the variables are not kept, and there is no limit on the
+  cache. The store is assumed not to change while it is open. `Source` is a
+  context manager, and `close()` drops everything it kept. `open` is not in
+  `__all__`, so `from zarrextract import *` leaves the built-in `open` alone.
+  A `Source` cannot be pickled, and thread safety is not promised.
+- `SourceClosedError`, which derives from `ZarrExtractError` and `ValueError`,
+  for a `Source` used after `close()`.
+
+### Changed
+
+- `extract()` and `describe()` now open a `Source` for the call. Their
+  signatures, results and errors do not change.
 
 ### Fixed
 

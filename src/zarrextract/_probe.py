@@ -6,7 +6,7 @@ import numpy as np
 import zarr
 from numpy.typing import NDArray
 
-from zarrextract._cf import decode_time
+from zarrextract._cf import decode_time_with, parse_time_encoding
 from zarrextract._errors import SelectionError
 
 
@@ -40,17 +40,17 @@ class LazyAxis:
         self.is_longitude = is_longitude
         self.size = node.shape[0]
         self._node = node
-        self._units = units
-        self._calendar = calendar
+        # Parsed once here, not on every probe of a value.
+        self._encoding = None if units is None else parse_time_encoding(units, calendar)
         self._chunk_size = node.chunks[0]
         self._chunks: dict[int, NDArray[Any]] = {}
         self._values: dict[int, Any] = {}
         self.dtype: np.dtype[Any] = self._decode(self._chunk(0)[:1]).dtype
 
     def _decode(self, raw: NDArray[Any]) -> NDArray[Any]:
-        if self._units is None:
+        if self._encoding is None:
             return raw
-        return decode_time(raw, self._units, self._calendar)
+        return decode_time_with(raw, self._encoding)
 
     def _chunk(self, k: int) -> NDArray[Any]:
         if k not in self._chunks:

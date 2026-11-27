@@ -9,6 +9,10 @@ class StoreOpenError(ZarrExtractError):
     """The store could not be opened as a Zarr group."""
 
 
+class SourceClosedError(ZarrExtractError, ValueError):
+    """A ``Source`` was used after ``close()``."""
+
+
 class VariableNotFoundError(ZarrExtractError, KeyError):
     """The requested array does not exist in the store."""
 

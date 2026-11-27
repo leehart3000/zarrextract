@@ -10,9 +10,18 @@ Functions
 
 .. autofunction:: extract
 
+.. autofunction:: open
+
 .. autofunction:: write
 
 .. autofunction:: provenance
+
+Open stores
+-----------
+
+.. autoclass:: Source
+   :members: store, closed, describe, extract, close
+   :special-members: __enter__, __exit__
 
 Provenance
 ----------
@@ -63,6 +72,8 @@ Exceptions
 .. autoexception:: ZarrExtractError
 
 .. autoexception:: StoreOpenError
+
+.. autoexception:: SourceClosedError
 
 .. autoexception:: VariableNotFoundError
 

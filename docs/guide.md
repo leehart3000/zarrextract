@@ -296,8 +296,8 @@ table = zx.extract("s3://bucket/era5.zarr", "t2m", lat=51.5, lon=-0.1)
 
 **Storage options.** The backend finds credentials in its usual way, for
 example from environment variables or a configuration file. To pass options to
-the backend, use the keyword-only `storage_options` argument of `describe()`
-and `extract()`.
+the backend, use the keyword-only `storage_options` argument of `describe()`,
+`extract()` and `open()`.
 
 **Anonymous buckets.** To read a public bucket without credentials, pass
 `{"anon": True}`:
@@ -319,6 +319,63 @@ an OME-Zarr store from its metadata (see {ref}`ome-zarr`), and raises
 `StoreOpenError` for any other store. `extract()` still works if you know the
 array's path.
 
+(many-selections)=
+## Many selections from one store
+
+`extract()` and `describe()` open the store on every call. To make several
+selections from the same store, open it once with `open()`:
+
+```python
+with zx.open("s3://bucket/sst.zarr", storage_options={"anon": True}) as src:
+    src.describe()
+    london = src.extract("analysed_sst", lat=51.5, lon=-0.1, time="2019-06")
+    paris = src.extract("analysed_sst", lat=48.9, lon=2.4, time="2019-06")
+```
+
+`Source.extract()` and `Source.describe()` take the same selections and give
+the same tables as the functions, including the provenance. The
+`storage_options` go to `open()`, and `Source.extract()` raises `TypeError` if
+you pass them there. `open()` opens the store at once, so a store that cannot
+be opened raises `StoreOpenError` there.
+
+**What is kept.** A `Source` keeps:
+
+- the group, and the metadata of every array it has looked at;
+- each coordinate that was read whole, already decoded (including CF time);
+- the chunks of a long coordinate that were read to search it by bisection,
+  and the values found in them, so a later selection nearby reads few or none;
+- the result of `describe()` for each `max_depth`.
+
+It does not keep the chunks of the variables you extract, so the memory used
+does not grow with the amount of data you read. It is set by the size of the
+store's coordinates. For MUR SST (latitude, longitude and 6,443 days) that is
+under 1 MB, and for a CMIP6 `tas` store tens of kilobytes. There is no limit
+on the cache. The worst case is a very long coordinate, such as a hundred
+million timestamps, if every one of its chunks ends up being searched, which
+takes about 1.6 GB.
+
+**Changes to the store.** The store is assumed not to change while it is open.
+If it does, a result can mix the kept metadata and coordinates with new data.
+Open the store again to see the changes.
+
+**Closing.** Using `Source` in a `with` block closes it at the end. Without
+`with`, call `close()` when you are done; until then it stays usable. `close()`
+drops the group and everything kept, which frees the memory. It does not close
+the filesystem, which fsspec shares between users of the same store. After
+`close()`, `describe()` and `extract()` raise `SourceClosedError`, and calling
+`close()` again does nothing. Tables you already have are not affected.
+
+**Things to know.**
+
+- A repeated `describe()` returns the first result, so an
+  `OmeMetadataWarning` is given only the first time.
+- A `Source` has been tested from several threads only on local and in-memory
+  stores, and thread safety is not promised.
+- A `Source` cannot be pickled. Open the store again in the other process.
+- `from zarrextract import *` does not import `open`, so that it does not
+  replace Python's own `open`. Write `zx.open(...)`, or
+  `from zarrextract import open as open_store`.
+
 ## Performance
 
 - Only the chunks that overlap the selection are read.
@@ -326,4 +383,6 @@ array's path.
   which reads about one chunk per halving instead of the whole coordinate.
   Coordinates you do not select on are read whole, because the table needs
   their values.
+- `extract()` opens the store on every call. For many selections from one
+  store, use `open()` (see {ref}`many-selections`).
 - Dask is not supported.

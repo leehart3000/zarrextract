@@ -7,10 +7,11 @@ from typing import Any
 
 import zarr
 
+from zarrextract._cache import Cache
 from zarrextract._errors import StoreOpenError, VariableNotFoundError
 from zarrextract._ome import OmeFinder, OmeGroup, OmeImage
 from zarrextract._provenance import redact_urls
-from zarrextract._store import call_wrapped, dimension_names, open_group
+from zarrextract._store import call_wrapped, dimension_names
 
 
 @dataclass(frozen=True, slots=True)
@@ -116,26 +117,31 @@ def _list_members(
 
 
 def _node_opener(
-    group: zarr.Group, members: dict[str, Node] | None, complete: bool
+    group: zarr.Group,
+    members: dict[str, Node] | None,
+    complete: bool,
+    nodes: dict[str, Node | None],
 ) -> Callable[[str], Node | None]:
     """Return a function that opens the node at a path, or gives ``None``.
 
-    Nodes already listed are reused. If the listing is ``complete``, a path
-    that is not in it does not exist; otherwise it is opened by path.
+    ``nodes`` holds the nodes opened so far, here and by ``extract()``. Nodes
+    already listed are added to it. If the listing is ``complete``, a path that
+    is not in it does not exist; otherwise it is opened by path.
     """
-    cache: dict[str, Node | None] = dict(members or {})
+    for path, node in (members or {}).items():
+        nodes.setdefault(path, node)
 
     def open_node(path: str) -> Node | None:
         if path == "":
             return group
-        if path not in cache:
+        if path not in nodes:
             if complete:
                 return None
             try:
-                cache[path] = group[path]
+                nodes[path] = group[path]
             except (KeyError, FileNotFoundError):
-                cache[path] = None
-        return cache[path]
+                nodes[path] = None
+        return nodes[path]
 
     return open_node
 
@@ -186,6 +192,9 @@ def describe(
     ``storage_options`` is passed to the fsspec backend, for example
     ``{"anon": True}`` to read a public S3 bucket without credentials.
 
+    Each call opens the store again. To describe a store and then extract from
+    it, open it once with ``open()``.
+
     Raises:
         StoreOpenError: The store cannot be opened or listed, or the server
             or the connection fails.
@@ -195,14 +204,41 @@ def describe(
             further down give an ``OmeMetadataWarning``.
         ValueError: ``max_depth`` is negative.
     """
+    check_max_depth(max_depth)
+    # Imported here because _source imports this module.
+    from zarrextract._source import open as open_source
+
+    with open_source(store, storage_options=storage_options) as source:
+        return source.describe(max_depth=max_depth)
+
+
+def check_max_depth(max_depth: int | None) -> None:
     if max_depth is not None and max_depth < 0:
         raise ValueError(f"max_depth must be None or >= 0, not {max_depth}")
-    target = os.fspath(store)
-    group = open_group(store, storage_options)
+
+
+def describe_from_cache(
+    cache: Cache, target: str, max_depth: int | None
+) -> StoreDescription:
+    """Describe an open store, listing it once and then answering from ``cache``."""
+    found = cache.descriptions.get(max_depth)
+    if found is None:
+        found = cache.descriptions.setdefault(
+            max_depth, _describe_group(cache, target, max_depth)
+        )
+    return found
+
+
+def _describe_group(
+    cache: Cache, target: str, max_depth: int | None
+) -> StoreDescription:
+    group = cache.group
     members, list_error = _list_members(group, max_depth)
     listed = members is not None
     finder = OmeFinder(
-        _node_opener(group, members, complete=listed and max_depth is None),
+        _node_opener(
+            group, members, complete=listed and max_depth is None, nodes=cache.nodes
+        ),
         strict=not listed,
     )
     call_wrapped(

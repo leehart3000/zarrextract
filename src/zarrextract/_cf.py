@@ -3,6 +3,7 @@
 import math
 import re
 from collections.abc import Mapping
+from dataclasses import dataclass
 from typing import Any
 
 import numpy as np
@@ -171,6 +172,40 @@ def _decode_noleap(
     return decoded
 
 
+@dataclass(frozen=True, slots=True)
+class TimeEncoding:
+    """The parsed ``units`` and ``calendar`` of a CF time coordinate."""
+
+    units: str
+    resolution: str
+    factor: int
+    reference: np.datetime64
+    """The reference date, at the resolution of the decoded values."""
+    calendar: str
+
+
+def parse_time_encoding(units: str, calendar: object = None) -> TimeEncoding:
+    """Parse and check CF time ``units`` and ``calendar`` once, for reuse.
+
+    Raises the same errors as ``decode_time`` does for bad units, an unsupported
+    calendar or a reference date the unit cannot hold.
+    """
+    resolution, factor, reference = _parse_units(units)
+    name = _check_calendar(calendar)
+    if name in _MIXED_CALENDARS and reference < _GREGORIAN_START:
+        raise UnsupportedCalendarError(
+            f"The reference date in {units!r} is before 1582-10-15, where the "
+            f"{name!r} calendar differs from the proleptic Gregorian calendar. "
+            "Use the proleptic_gregorian calendar, which is supported."
+        )
+    reference_res = reference.astype(f"datetime64[{resolution}]")
+    if reference_res.astype("datetime64[us]") != reference:
+        raise TimeDecodingError(
+            f"The reference date in {units!r} is finer than the unit allows."
+        )
+    return TimeEncoding(units, resolution, factor, reference_res, name)
+
+
 def decode_time(
     values: NDArray[Any], units: str, calendar: object = None
 ) -> NDArray[np.datetime64]:
@@ -180,21 +215,17 @@ def decode_time(
     ``ms`` for milliseconds and ``us`` for microseconds. Non-finite values
     become ``NaT``.
     """
-    resolution, factor, reference = _parse_units(units)
-    name = _check_calendar(calendar)
+    return decode_time_with(values, parse_time_encoding(units, calendar))
+
+
+def decode_time_with(
+    values: NDArray[Any], encoding: TimeEncoding
+) -> NDArray[np.datetime64]:
+    """Decode CF time values with units and calendar that are already parsed."""
+    units, resolution, factor = encoding.units, encoding.resolution, encoding.factor
+    reference_res, name = encoding.reference, encoding.calendar
     mixed = name in _MIXED_CALENDARS
-    if mixed and reference < _GREGORIAN_START:
-        raise UnsupportedCalendarError(
-            f"The reference date in {units!r} is before 1582-10-15, where the "
-            f"{name!r} calendar differs from the proleptic Gregorian calendar. "
-            "Use the proleptic_gregorian calendar, which is supported."
-        )
     unit_type = f"datetime64[{resolution}]"
-    reference_res = reference.astype(unit_type)
-    if reference_res.astype("datetime64[us]") != reference:
-        raise TimeDecodingError(
-            f"The reference date in {units!r} is finer than the unit allows."
-        )
 
     array = np.asarray(values)
     if array.dtype.kind not in "iuf":

@@ -56,7 +56,11 @@ def test_a_store_that_cannot_be_opened(monkeypatch: pytest.MonkeyPatch) -> None:
 
     monkeypatch.setattr(zarr, "open_group", fail)
 
-    for call in (lambda: zx.extract(URL, "temp"), lambda: zx.describe(URL)):
+    for call in (
+        lambda: zx.extract(URL, "temp"),
+        lambda: zx.describe(URL),
+        lambda: zx.open(URL),
+    ):
         with pytest.raises(zx.StoreOpenError) as info:
             call()
 
@@ -72,13 +76,14 @@ def test_a_missing_backend(monkeypatch: pytest.MonkeyPatch) -> None:
 
     monkeypatch.setattr(zarr, "open_group", fail)
 
-    with pytest.raises(
-        zx.StoreOpenError, match="a required package is missing"
-    ) as info:
-        zx.extract(URL, "temp")
+    for call in (lambda: zx.extract(URL, "temp"), lambda: zx.open(URL)):
+        with pytest.raises(
+            zx.StoreOpenError, match="a required package is missing"
+        ) as info:
+            call()
 
-    assert_no_credentials(info.value)
-    assert f"Install s3fs to read {CLEAN_URL}" in str(info.value)
+        assert_no_credentials(info.value)
+        assert f"Install s3fs to read {CLEAN_URL}" in str(info.value)
 
 
 def test_a_client_error_while_opening(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -120,6 +125,37 @@ def test_a_client_error_while_reading(
 
     assert f"reset while reading {CLEAN_URL}" in str(info.value)
     assert_no_credentials(info.value)
+
+
+def test_a_source_has_no_credentials(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    aiohttp = pytest.importorskip("aiohttp")
+    store = make_store(tmp_path / "s.zarr", 3)
+    real = zarr.open_group(store, mode="r")
+    monkeypatch.setattr(zarr, "open_group", lambda *args, **kwargs: real)
+
+    with zx.open(URL) as src:
+        assert src.store == CLEAN_URL
+        assert repr(src) == f"Source({CLEAN_URL!r})"
+        assert not any(leak in repr(src) for leak in LEAKS)
+        assert not any(leak in str(vars(src)["_target"]) for leak in LEAKS)
+
+        def fail(self: zarr.Array[Any], *args: object) -> object:
+            raise aiohttp.ClientConnectionError(f"reset while reading {URL}")
+
+        monkeypatch.setattr(zarr.Array, "__getitem__", fail)
+
+        with pytest.raises(zx.StoreOpenError, match="reset while reading") as info:
+            src.extract("temp", time=0)
+
+        assert f"reset while reading {CLEAN_URL}" in str(info.value)
+        assert_no_credentials(info.value)
+
+    with pytest.raises(zx.SourceClosedError) as closed:
+        src.extract("temp")
+    assert not any(leak in str(closed.value) for leak in LEAKS)
+    assert repr(src) == f"Source({CLEAN_URL!r}, closed)"
 
 
 def test_a_store_that_cannot_be_listed(
