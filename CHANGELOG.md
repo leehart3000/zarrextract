@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-11-27
+
 ### Added
 
 - `extract()` attaches its provenance to the table as schema metadata, under
@@ -63,6 +65,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 - `extract()` and `describe()` now open a `Source` for the call. Their
   signatures, results and errors do not change.
+- The Performance page has new results, including repeated selections on an
+  open store with `zx.open()`.
 
 ### Fixed
 
@@ -136,7 +140,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 First release.
 
-[Unreleased]: https://gitlab.com/leehart3000/zarrextract/-/compare/v0.3.0...main
+[Unreleased]: https://gitlab.com/leehart3000/zarrextract/-/compare/v0.4.0...main
+[0.4.0]: https://gitlab.com/leehart3000/zarrextract/-/compare/v0.3.0...v0.4.0
 [0.3.0]: https://gitlab.com/leehart3000/zarrextract/-/compare/v0.2.0...v0.3.0
 [0.2.0]: https://gitlab.com/leehart3000/zarrextract/-/compare/v0.1.1...v0.2.0
 [0.1.1]: https://gitlab.com/leehart3000/zarrextract/-/tags/v0.1.1
