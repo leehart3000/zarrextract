@@ -90,9 +90,14 @@ and 0.87 to 4.36 seconds in ZarrExtract; the notebook has them all.
   searches for each new date by bisection and reads the chunks it hasn't
   seen. ZarrExtract also builds a table with one row per value, which for
   2.4 million values takes time that xarray's array doesn't need.
-- **Not yet explained:** in case 8, the first selection on an open
-  ZarrExtract store took 4.36 seconds, more than a whole `zx.extract()`
-  call (2.70). This may be network variation, and will be checked.
+- **Case 8 mostly measures S3 bandwidth.** In case 8, the first selection
+  on an open ZarrExtract store took 4.36 seconds, more than a whole
+  `zx.extract()` call (2.70). Measured with request counting, the first
+  selection on a handle and a whole `zx.extract()` made the same reads (14
+  data chunks, 329 MB), while the same work took 4.2 to 15.1 seconds from
+  one round to the next, so the difference was network variation. Case 8
+  downloads about 330 MB of compressed chunks for 2.4 million values (about
+  5 MB), so for any library it mostly measures S3 bandwidth.
 - **Dask adds overhead to small reads.** xarray was slower with Dask than
   without it in every case here.
 - **Longitude across the seam.** For London (longitude -0.1) on stores

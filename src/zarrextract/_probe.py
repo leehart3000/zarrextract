@@ -79,14 +79,25 @@ class LazyAxis:
         return self._values[i]
 
     def read(self, selected: slice) -> NDArray[Any]:
-        """Return the decoded values in a slice, using chunks already read."""
+        """Return the decoded values in a slice.
+
+        The chunks the slice covers that have not been read yet are read with
+        one array read, so that zarr fetches them together, and are kept.
+        """
         size = self._chunk_size
         first, last = selected.start // size, (selected.stop - 1) // size
-        if all(k in self._chunks for k in range(first, last + 1)):
-            joined = np.concatenate([self._chunks[k] for k in range(first, last + 1)])
-            raw = joined[selected.start - first * size :][
-                : selected.stop - selected.start
-            ]
-        else:
-            raw = np.asarray(self._node[selected])
+        missing = [k for k in range(first, last + 1) if k not in self._chunks]
+        if missing:
+            # One read from the first to the last missing chunk. Chunks in
+            # between that are already cached are read again, which is rare
+            # because ranges are contiguous and cached chunks lie at the ends.
+            start = missing[0] * size
+            stop = min((missing[-1] + 1) * size, self.size)
+            block = np.asarray(self._node[start:stop])
+            for k in range(missing[0], missing[-1] + 1):
+                if k not in self._chunks:
+                    offset = k * size - start
+                    self._chunks[k] = block[offset : offset + size]
+        joined = np.concatenate([self._chunks[k] for k in range(first, last + 1)])
+        raw = joined[selected.start - first * size :][: selected.stop - selected.start]
         return self._decode(raw)

@@ -183,6 +183,48 @@ def test_a_later_point_on_a_long_coordinate_reads_few_new_chunks(
     assert first.num_rows == 1
 
 
+def test_a_repeated_range_on_a_long_coordinate_reads_no_coordinate_chunks(
+    long_line: Path,
+) -> None:
+    # 60 days are 12 chunks of 5 values.
+    selection = ("2008-06-01", "2008-07-30")
+    with zx.open(to_memory(long_line)) as src:
+        first = src.extract("v", time=selection)
+        first_chunks = set(chunk_reads("long.zarr", "time"))
+        reads.clear()
+
+        again = src.extract("v", time=selection)
+
+    assert first.num_rows == 60
+    assert len(first_chunks) >= 12
+    assert chunk_reads("long.zarr", "time") == []
+    assert again.equals(first)
+
+
+def test_an_overlapping_range_reads_only_the_new_coordinate_chunks(
+    long_line: Path,
+) -> None:
+    with zx.open(to_memory(long_line)) as src:
+        src.extract("v", time=("2008-06-01", "2008-06-30"))
+        reads.clear()
+
+        # Days 3074 to 3103 are chunks 614 to 620, and this range runs on to
+        # day 3133, which is chunk 626. The new values are chunks 621 to 626.
+        # (Bisection has already read the last two.)
+        table = src.extract("v", time=("2008-06-15", "2008-07-30"))
+        new_chunks = set(chunk_reads("long.zarr", "time"))
+
+    start = (dt.date(2008, 6, 15) - dt.date(2000, 1, 1)).days
+    assert table["v"].to_pylist() == [float(i) for i in range(start, start + 46)]
+    # The search for the end of the range also probes a few chunks beyond it.
+    numbers = {int(key.rsplit("/", 1)[-1]) for key in new_chunks}
+    # Chunks 625 and 626 were already read by the search for the first range.
+    assert numbers >= set(range(621, 625))
+    assert len(numbers) <= 12
+    # None of the chunks of the first range (614 to 620) is read again.
+    assert not numbers & set(range(614, 621))
+
+
 def test_the_same_counts_with_a_counting_store(
     tmp_path: Path, zarr_format: ZarrFormat
 ) -> None:

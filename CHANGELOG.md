@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- On a handle from `zx.open()`, a time range that covers several chunks of a
+  long coordinate was read again on every call, because the cache was used
+  only when it held all of the chunks. The missing chunks are now read with
+  one array read, so that they are fetched together, and kept. A repeated
+  range reads no coordinate chunks, and an overlapping range reads only the
+  new ones. The results do not change.
+
 ### Changed
 
 - Documentation and notebooks only, with no change to the package. The
