@@ -3,7 +3,8 @@
 ## Purpose
 
 zarrextract extracts points, time series and bounding boxes from Zarr
-stores into Apache Arrow tables. It is a lighter alternative to
+stores into Apache Arrow tables, and saves them to Parquet, CSV and Arrow
+files with `zx.write()`. It is a lighter alternative to
 `xarray.open_zarr(...).sel(...)` for the common case where you only want a
 small piece of a large store.
 

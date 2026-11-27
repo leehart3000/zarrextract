@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- Documentation and notebooks only, with no change to the package. The
+  Performance page says "about the same" where the two times are within 10%
+  (case 4). The README, the documentation home page and the contributor guide
+  mention saving tables with `zx.write()`. The benchmarks notebook no longer
+  ends with an empty cell. The OME-Zarr notebook now uses `zx.open()` and
+  `describe()` on the IDR store, reads the scale of each level from the
+  `OmeImage`, and ends with a section that saves the time series to Parquet
+  and reads its provenance back.
+
 ## [0.4.0] - 2026-11-27
 
 ### Added

@@ -35,14 +35,15 @@ Median time in seconds, from opening the store to the values in memory:
 | 1. MUR SST, one point | 0.98 | 6.43 | 7.10 | 6.5× |
 | 2. MUR SST, one point, June 2019 | 2.12 | 6.70 | 9.43 | 3.2× |
 | 3. MUR SST, box, one day (80,601 values) | 1.17 | 6.18 | 6.49 | 5.3× |
-| 4. CMIP6 MRI-ESM2-0, London, 1850 to 2014 | 2.39 | 2.37 | 4.19 | 1.0× |
+| 4. CMIP6 MRI-ESM2-0, London, 1850 to 2014 | 2.39 | 2.37 | 4.19 | about the same |
 | 5. CMIP6 CESM2, London, 2014 (`noleap`) | 0.56 | 0.76 | 0.97 | 1.4× |
 | 6. CMIP6 MRI-ESM2-0, box across 0° E, July 2014 | 0.54 | 0.73 | 0.96 | 1.3× |
 | 7. IDR OME-Zarr image, one pixel, 79 time points | 3.35 | could not open | could not open | |
 | 8. MUR SST, box, June 2019 (2.4 million values) | 2.70 | 8.25 | 9.99 | 3.1× |
 
 "Faster by" compares ZarrExtract with the faster of the two xarray
-contenders. Converting xarray's result to a table (`to_dataframe()`)
+contenders. Where the two times are within 10% of each other (case 4), it
+says "about the same". Converting xarray's result to a table (`to_dataframe()`)
 changed its times by less than 10%.
 
 ## Repeated selections on one open store
