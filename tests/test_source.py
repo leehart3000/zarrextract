@@ -206,23 +206,27 @@ def test_an_overlapping_range_reads_only_the_new_coordinate_chunks(
 ) -> None:
     with zx.open(to_memory(long_line)) as src:
         src.extract("v", time=("2008-06-01", "2008-06-30"))
+        first = {
+            int(key.rsplit("/", 1)[-1]) for key in chunk_reads("long.zarr", "time")
+        }
         reads.clear()
 
         # Days 3074 to 3103 are chunks 614 to 620, and this range runs on to
-        # day 3133, which is chunk 626. The new values are chunks 621 to 626.
-        # (Bisection has already read the last two.)
+        # day 3133, which is chunk 626. Which of the new chunks the first
+        # search already read depends on where it probed, so the test checks
+        # the rule rather than chunk numbers.
         table = src.extract("v", time=("2008-06-15", "2008-07-30"))
         new_chunks = set(chunk_reads("long.zarr", "time"))
 
     start = (dt.date(2008, 6, 15) - dt.date(2000, 1, 1)).days
     assert table["v"].to_pylist() == [float(i) for i in range(start, start + 46)]
-    # The search for the end of the range also probes a few chunks beyond it.
     numbers = {int(key.rsplit("/", 1)[-1]) for key in new_chunks}
-    # Chunks 625 and 626 were already read by the search for the first range.
-    assert numbers >= set(range(621, 625))
+    # No chunk read for the first range is read again.
+    assert not numbers & first
+    # Between them, the two calls read every chunk of the second range.
+    assert set(range(617, 627)) <= first | numbers
+    # The search for the end of the range also probes a few chunks beyond it.
     assert len(numbers) <= 12
-    # None of the chunks of the first range (614 to 620) is read again.
-    assert not numbers & set(range(614, 621))
 
 
 def test_the_same_counts_with_a_counting_store(
