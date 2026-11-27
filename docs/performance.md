@@ -88,8 +88,10 @@ and 0.87 to 4.36 seconds in ZarrExtract; the notebook has them all.
   against 1.01 in xarray, and in case 8 2.85 against 1.96. xarray keeps
   the whole time index in memory once it is open, while ZarrExtract
   searches for each new date by bisection and reads the chunks it hasn't
-  seen. ZarrExtract also builds a table with one row per value, which for
-  2.4 million values takes time that xarray's array doesn't need.
+  seen, and until a later fix it also read again the time-coordinate
+  chunks it had already fetched. Building the table with one row per
+  value is not the cause: measured offline, it takes about 20 ms for 2.4
+  million values. The rest is within the network variation of case 8.
 - **Case 8 mostly measures S3 bandwidth.** In case 8, the first selection
   on an open ZarrExtract store took 4.36 seconds, more than a whole
   `zx.extract()` call (2.70). Measured with request counting, the first
