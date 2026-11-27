@@ -48,7 +48,7 @@ its dimension and has the dimension's length.
   groups are selected by index unless the store has a top-level coordinate of
   the same name.
 - Arrays in nested groups are named by their path, which is what `extract()`
-  takes. In an OME-Zarr image the data are in `0/0`:
+  takes. In an OME-Zarr image the data are in `0/0` (see {ref}`ome-zarr`):
 
 ```python
 description = zx.describe("image.zarr")
@@ -57,6 +57,87 @@ series = zx.extract("image.zarr", "0/0", c=0, z=0, y=100, x=100)
 
 zx.describe("image.zarr", max_depth=0)  # top-level arrays only
 ```
+
+(ome-zarr)=
+## OME-Zarr images
+
+`describe()` recognises OME-Zarr (OME-NGFF) stores, version 0.4 (Zarr v2,
+metadata in `.zattrs`) and version 0.5 (Zarr v3, metadata under the `ome` key
+of `zarr.json`). The groups it finds are in `description.ome`, sorted by path:
+
+- `OmeImage`: an image, with its version, its `multiscales` entries (each
+  with its name, axes and resolution levels), and the channel labels from
+  `omero` metadata. A label image is an `OmeImage` with `is_label` set.
+- `OmeLabels`: the `labels` group beside an image's resolution levels, which
+  lists its label images.
+- `OmePlate` and `OmeWell`: a plate with its rows, columns and well paths,
+  and a well with its image paths.
+- `OmeContainer`: a bioformats2raw container, a group that holds images
+  `0`, `1`, ... (as in the stores of the Image Data Resource).
+
+A store that is not OME-Zarr has `description.ome == ()` and is described
+exactly as before. Printing an OME class gives a readable summary:
+
+```python
+description = zx.describe("image.zarr")
+image = description.images[0]
+print(image)
+```
+
+```text
+OME-Zarr image '0' (version 0.5)
+  multiscales 1 of 1 (no name)
+    axes: t (time), c (channel), z (space), y (space), x (space)
+    levels:
+      0/0: shape (79, 1, 201, 333, 333), uint16, chunks (1, 1, 1, 333, 333)
+        scale (1.0, 1.0, 1.0, 1.0, 1.0)
+      0/1: shape (79, 1, 201, 166, 166), uint16, chunks (1, 1, 1, 166, 166)
+        scale (1.0, 1.0, 1.0, 2.0, 2.0)
+  channels: (none in the metadata)
+  labels: (none)
+```
+
+Each level's `name` is the array path that `extract()` takes:
+
+```python
+level = image.levels[1]  # half resolution
+level.scale  # (1.0, 1.0, 1.0, 2.0, 2.0): one value per axis
+plane = zx.extract("image.zarr", level.name, t=0, c=0, z=100)
+```
+
+**Transforms** are reported as the store gives them. Each level has its
+`scale` and, if present, its `translation`. A `multiscales` entry can have its
+own `scale` and `translation`, which apply after the level's. They are kept
+on the entry, not combined into the levels. Axis types and units are `None`
+when the metadata leaves them out.
+
+**Versions.** A v0.4 group may leave out its version, and then `version` is
+`None`. A v0.5 group without `ome.version` takes the version of the nearest
+group above it that has one. For a version other than 0.4 or 0.5, only the
+dataset paths are read: the image has `supported=False` and no axes,
+transforms or channel labels.
+
+**Finding the images.** OME groups are found from the root of the store and
+by following the paths in their metadata: a container's images, a plate's
+wells, a well's images, an image's `labels` group and its label images.
+`max_depth` does not limit these. Other OME groups are found by listing, and
+`max_depth` limits those as it limits the arrays.
+
+**Stores that can't be listed.** An OME-Zarr store does not need a listing:
+`describe()` finds the arrays from the `multiscales` dataset paths. This
+reads only metadata, but costs one request per group and array it opens: for
+a container, one per image plus one for the first missing number, and for a
+plate, one per well and image.
+
+**Malformed metadata.** If a group's OME metadata is not valid, `describe()`
+gives an `OmeMetadataWarning` that names the group and the problem, leaves
+that group out of `description.ome`, and lists its arrays as usual. Only when
+the store can't be listed and the metadata needed to find any arrays is
+unusable, so that there is nothing to describe, it raises `OmeMetadataError`
+instead. That is the case for the root group's metadata and for the `series`
+list of a container. A malformed or missing well, image in a well, labels
+group or label still gives a warning, and the rest is described. An image
+without a `labels` group is normal and gives no warning.
 
 (longitudes)=
 ## Longitudes
@@ -145,8 +226,10 @@ table = zx.extract(
 
 **Stores that can't be listed.** Some servers cannot list a group, for example
 plain HTTPS servers that answer a directory URL with an error. `describe()`
-then uses the consolidated metadata, and raises `StoreOpenError` if there is
-none. `extract()` still works if you know the array's path.
+then uses the consolidated metadata. If there is none, it finds the arrays of
+an OME-Zarr store from its metadata (see {ref}`ome-zarr`), and raises
+`StoreOpenError` for any other store. `extract()` still works if you know the
+array's path.
 
 ## Performance
 

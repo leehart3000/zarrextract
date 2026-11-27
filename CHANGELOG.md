@@ -9,6 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- `describe()` recognises OME-Zarr stores (OME-NGFF 0.4 and 0.5). The new
+  `StoreDescription.ome` holds the images, label images, labels groups,
+  plates, wells and bioformats2raw containers it finds, as the new classes
+  `OmeImage`, `OmeMultiscale`, `OmeLevel`, `OmeAxis`, `OmeLabels`, `OmePlate`,
+  `OmeWell` and `OmeContainer`. An image reports its version, its axes, each
+  resolution level with its shape, dtype, chunks, scale and translation, and
+  its channel labels. Printing one gives a readable summary. Stores that are
+  not OME-Zarr are described exactly as before.
+- `describe()` on an OME-Zarr store that can't be listed and has no
+  consolidated metadata, such as the IDR stores over HTTPS, now finds the
+  arrays from the OME metadata instead of raising `StoreOpenError`.
+- `OmeMetadataWarning` for malformed OME metadata, which leaves the group out
+  of `StoreDescription.ome`, and `OmeMetadataError` when the store can't be
+  listed and the metadata needed to find any arrays (the root group's, or a
+  container's `series`) is unusable. Problems further down, such as a
+  malformed well or label, give the warning and the rest is described.
 - A Performance page in the docs, comparing extraction times with xarray, and
   the saved results of `notebooks/benchmarks.ipynb`.
 

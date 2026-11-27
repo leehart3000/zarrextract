@@ -41,6 +41,25 @@ class AntimeridianError(SelectionError):
     """
 
 
+class OmeMetadataError(ZarrExtractError):
+    """OME-Zarr metadata is not valid, and the store cannot be listed.
+
+    Raised by ``describe()`` only when the metadata needed to find any arrays
+    is unusable, so there is nothing to describe: that of the root group, or
+    the ``series`` list of a container. For a malformed or missing well, image
+    in a well, labels group or label, and in any store that can be listed,
+    ``OmeMetadataWarning`` is given instead.
+    """
+
+
+class OmeMetadataWarning(UserWarning):
+    """The OME-Zarr metadata of a group is not valid.
+
+    The message names the group and the problem. ``describe()`` leaves that
+    group out of ``StoreDescription.ome``, and lists its arrays as usual.
+    """
+
+
 class TimeDecodingError(ZarrExtractError):
     """Time values or units could not be decoded."""
 

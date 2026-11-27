@@ -7,6 +7,8 @@ from zarrextract._errors import (
     AntimeridianError,
     EmptySelectionError,
     MissingDimensionNamesError,
+    OmeMetadataError,
+    OmeMetadataWarning,
     SelectionError,
     StoreOpenError,
     TimeDecodingError,
@@ -16,6 +18,16 @@ from zarrextract._errors import (
     ZarrExtractError,
 )
 from zarrextract._extract import extract
+from zarrextract._ome import (
+    OmeAxis,
+    OmeContainer,
+    OmeImage,
+    OmeLabels,
+    OmeLevel,
+    OmeMultiscale,
+    OmePlate,
+    OmeWell,
+)
 
 __version__ = version("zarrextract")
 
@@ -24,6 +36,16 @@ __all__ = [
     "ArrayInfo",
     "EmptySelectionError",
     "MissingDimensionNamesError",
+    "OmeAxis",
+    "OmeContainer",
+    "OmeImage",
+    "OmeLabels",
+    "OmeLevel",
+    "OmeMetadataError",
+    "OmeMetadataWarning",
+    "OmeMultiscale",
+    "OmePlate",
+    "OmeWell",
     "SelectionError",
     "StoreDescription",
     "StoreOpenError",

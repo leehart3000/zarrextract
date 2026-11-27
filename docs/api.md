@@ -20,6 +20,33 @@ Store description
 .. autoclass:: ArrayInfo
    :members:
 
+OME-Zarr groups
+---------------
+
+.. autoclass:: OmeImage
+   :members:
+
+.. autoclass:: OmeMultiscale
+   :members:
+
+.. autoclass:: OmeLevel
+   :members:
+
+.. autoclass:: OmeAxis
+   :members:
+
+.. autoclass:: OmeLabels
+   :members:
+
+.. autoclass:: OmePlate
+   :members:
+
+.. autoclass:: OmeWell
+   :members:
+
+.. autoclass:: OmeContainer
+   :members:
+
 Exceptions
 ----------
 
@@ -42,4 +69,11 @@ Exceptions
 .. autoexception:: TimeDecodingError
 
 .. autoexception:: UnsupportedCalendarError
+
+.. autoexception:: OmeMetadataError
+
+Warnings
+--------
+
+.. autoexception:: OmeMetadataWarning
 ```

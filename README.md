@@ -46,8 +46,21 @@ series = zx.extract("image.zarr", "0/0", c=0, z=0, y=100, x=100)
 zx.describe("image.zarr", max_depth=0)  # top-level arrays only
 ```
 
+OME-Zarr stores (OME-NGFF 0.4 and 0.5) are recognised. `description.ome`
+holds the images, label images, plates, wells and bioformats2raw containers,
+with the axes, resolution levels, transforms and channel labels of each
+image:
+
+```python
+image = description.images[0]
+print(image)  # a readable summary
+level = image.levels[1]
+level.name, level.scale  # ('0/1', (1.0, 1.0, 1.0, 2.0, 2.0))
+```
+
 Some servers cannot list a group. `describe()` then uses the consolidated
-metadata, and raises `StoreOpenError` if there is none. `extract()` still
+metadata. If there is none, it finds the arrays of an OME-Zarr store from its
+metadata, and raises `StoreOpenError` for any other store. `extract()` still
 works there if you know the array's path.
 
 ### Extract data
