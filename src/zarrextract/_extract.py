@@ -32,7 +32,7 @@ from zarrextract._select import Axis, Selection, check_finite, select
 from zarrextract._store import dimension_names
 
 BISECT_MIN_CHUNKS = 8
-"""Selected coordinates with more chunks than this are searched by bisection."""
+"""Selected coordinates with more chunks than this are searched, not read whole."""
 
 
 def extract(
@@ -85,8 +85,9 @@ def extract(
     ``missing_value`` become nulls. In Zarr v2 so does the fill value in the
     array metadata, as in xarray; in Zarr v3 only the attributes count. Only
     the chunks that overlap the selection are read. A selected coordinate with
-    more than 8 chunks is searched by bisection, which reads about one chunk
-    per halving instead of the whole coordinate.
+    more than 8 chunks is searched instead of read whole: it estimates where
+    a value lies from the values already read and reads the chunks around the
+    estimate, a few at a time.
 
     The table carries its provenance as schema metadata under keys that start
     with ``zarrextract.``: the store (without any user name, password, query or
@@ -143,7 +144,7 @@ def _read_axis(
     """Read the coordinate for a dimension, or use its index if it has none.
 
     A selected coordinate with more than ``BISECT_MIN_CHUNKS`` chunks is not read
-    here. It comes back as a ``LazyAxis`` that is searched by bisection.
+    here. It comes back as a ``LazyAxis`` that is searched, reading few chunks.
     The second value is the metadata (units and long name) of its Arrow field.
 
     The result is kept in the cache. A coordinate that is read whole is the

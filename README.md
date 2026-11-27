@@ -90,8 +90,8 @@ box = zx.extract("era5.zarr", "t2m", lat=(50, 52), lon=(-1, 1), time="2020-06-01
 ```
 
 Coordinates are assumed to be sorted, ascending or descending. Long
-coordinates are searched by bisection, which gives wrong results on unsorted
-values.
+coordinates are searched without being read whole, which gives wrong results
+on unsorted values.
 
 Longitudes are converted to the store's convention (0 to 360 or -180 to 180).
 CF time coordinates become Arrow timestamps, `scale_factor` and `add_offset`

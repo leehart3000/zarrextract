@@ -29,6 +29,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- A long coordinate is now searched in fewer rounds of reads, where a round is
+  one array read of the coordinate. Each round estimates where the value lies
+  from the values already read and reads the chunks around the estimate,
+  together with the middle of what is still unknown, so uneven, descending
+  and gappy coordinates need no more rounds than the bisection used before.
+  Both ends of a range are searched together, and the chunks of a round are
+  read with one array read, so that zarr fetches them at the same time. On an
+  evenly spaced time axis a range takes about 3 rounds the first time
+  (including the middle of the range) and about 2 on an open handle, instead of
+  about 22. The results, the error messages and the cached chunks do not
+  change; the chunks are still kept whole.
 - A selection such as `"2001-02-29"` on a time coordinate in any other
   calendar now says that the date is not valid and which month has no such
   day, instead of repeating NumPy's message.

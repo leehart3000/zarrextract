@@ -3,7 +3,7 @@
 import math
 import re
 from calendar import month_name, monthrange
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from typing import Any
@@ -94,7 +94,8 @@ def select(axis: Axis | LazyAxis, selection: Selection) -> Indices:
     ``(start, stop)`` pair picks every value from start to stop, inclusive.
     A longitude range that wraps around the edge of the axis gives two slices:
     first the one holding ``start``, then the one holding ``stop``.
-    A ``LazyAxis`` is searched by bisection and gives the same answer.
+    A ``LazyAxis`` is searched, reading only some of its chunks, and gives the
+    same answer.
     """
     if isinstance(axis, LazyAxis):
         return _select_lazy(axis, selection)
@@ -362,24 +363,9 @@ def _show(axis: Axis | LazyAxis, value: Any) -> str:
     return str(value)
 
 
-# --- selection by bisection ---------------------------------------------------
-# These mirror the whole-read functions above, but look at single values of a
-# LazyAxis. Keep the two in step: the tests compare their answers.
-
-
-def _first_true(test: Callable[[int], bool], low: int, high: int) -> int:
-    """Return the first index in ``low..high`` where ``test`` is true.
-
-    ``test`` must be false and then true along the axis. ``high`` is returned
-    if it is never true.
-    """
-    while low < high:
-        middle = (low + high) // 2
-        if test(middle):
-            high = middle
-        else:
-            low = middle + 1
-    return low
+# --- selection by searching a LazyAxis ----------------------------------------
+# These mirror the whole-read functions above, but search a LazyAxis, which reads
+# only the chunks it needs. Keep the two in step: the tests compare their answers.
 
 
 def _select_lazy(axis: LazyAxis, selection: Selection) -> Indices:
@@ -433,25 +419,23 @@ def _bisect_range(
 
     bottom, top = start - tolerance, stop + tolerance
     bounds = [(bottom, math.inf), (-math.inf, top)] if wraps else [(bottom, top)]
+    # A run of values from ``lower`` to ``upper`` begins at the first value past
+    # one bound and ends at the first value past the other. All the bounds are
+    # searched together.
+    edges: list[tuple[float, bool]] = []
+    for lower, upper in bounds:
+        edges += (
+            [(lower, False), (upper, True)]
+            if increasing
+            else [(upper, False), (lower, True)]
+        )
+    found = axis.search(edges, increasing)
     runs = [
-        run
-        for lower, upper in bounds
-        if (run := _bisect_run(axis, increasing, lower, upper)) is not None
+        slice(begin, end)
+        for begin, end in zip(found[0::2], found[1::2], strict=True)
+        if begin < end
     ]
     return _join_runs(axis, runs, start, stop, low, high)
-
-
-def _bisect_run(
-    axis: LazyAxis, increasing: bool, bottom: float, top: float
-) -> slice | None:
-    """Return the slice of values from ``bottom`` to ``top``, or None if empty."""
-    if increasing:
-        begin = _first_true(lambda i: axis.value(i) >= bottom, 0, axis.size)
-        end = _first_true(lambda i: axis.value(i) > top, begin, axis.size)
-    else:
-        begin = _first_true(lambda i: axis.value(i) <= top, 0, axis.size)
-        end = _first_true(lambda i: axis.value(i) < bottom, begin, axis.size)
-    return slice(begin, end) if begin < end else None
 
 
 def _bisect_nearest(
@@ -479,10 +463,7 @@ def _bisect_nearest(
             return np.abs((axis.value(i) - value + 180.0) % 360.0 - 180.0)
         return np.abs(axis.value(i) - value)
 
-    if increasing:
-        after = _first_true(lambda i: axis.value(i) >= value, 0, axis.size)
-    else:
-        after = _first_true(lambda i: axis.value(i) <= value, 0, axis.size)
+    (after,) = axis.search([(value, False)], increasing)
     candidates = {max(after - 1, 0), min(after, axis.size - 1)}
     if wraps:
         candidates |= {0, axis.size - 1}

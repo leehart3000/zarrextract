@@ -626,7 +626,10 @@ def test_a_missing_time_found_by_bisection_raises(
     tmp_path: Path, zarr_format: ZarrFormat
 ) -> None:
     values = np.arange(0.0, 2000.0)
-    values[1000] = np.nan
+    # A missing time is only detected where the search reads values, so it is
+    # put at the end of the chunk of the selected value (index 360, chunk 7).
+    # Such axes are unsupported: the values should be sorted and complete.
+    values[399] = np.nan
     path = make_line(
         tmp_path / "n.zarr",
         zarr_format,

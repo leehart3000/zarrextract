@@ -30,8 +30,8 @@ class Source:
 
     * the group and the metadata of the arrays it has looked at;
     * each coordinate that was read whole, already decoded;
-    * the coordinate chunks that were read to search a long coordinate by
-      bisection, and the values found in them;
+    * the coordinate chunks that were read to search a long coordinate, and
+      the values found in them;
     * the result of ``describe()``, for each ``max_depth``.
 
     The chunks of the variables are not kept, so the memory used is set by the

@@ -44,7 +44,8 @@ A coordinate is a 1-D array in the top level of the store that is named after
 its dimension and has the dimension's length.
 
 - Coordinates must be sorted, ascending or descending. Long coordinates are
-  searched by bisection, which gives wrong results on unsorted values.
+  searched without being read whole, which gives wrong results on unsorted
+  values.
   Descending coordinates, such as a latitude running from 90 to -90, work the
   same way as ascending ones.
 - A dimension with no coordinate uses index positions `0, 1, 2, ...`, so
@@ -386,8 +387,8 @@ be opened raises `StoreOpenError` there.
 
 - the group, and the metadata of every array it has looked at;
 - each coordinate that was read whole, already decoded (including CF time);
-- the chunks of a long coordinate that were read to search it by bisection,
-  and the values found in them, so a later selection nearby reads few or none;
+- the chunks of a long coordinate that were read to search it, and the values
+  found in them, so a later selection nearby reads few or none;
 - the result of `describe()` for each `max_depth`.
 
 It does not keep the chunks of the variables you extract, so the memory used
@@ -423,8 +424,14 @@ the filesystem, which fsspec shares between users of the same store. After
 ## Performance
 
 - Only the chunks that overlap the selection are read.
-- A selected coordinate with more than 8 chunks is searched by bisection,
-  which reads about one chunk per halving instead of the whole coordinate.
+- A selected coordinate with more than 8 chunks is searched instead of read
+  whole. Each round estimates where a value lies from the values already read,
+  as if they were evenly spaced, and reads the chunks around the estimate. It
+  also reads the middle of what is still unknown, so uneven spacing, gaps and
+  descending order cost no more rounds than bisection. Both ends of a range are
+  searched together, and each round's chunks are read with one array read, so
+  that they are fetched at the same time. An evenly spaced time axis takes
+  about one round per selection.
   Coordinates you do not select on are read whole, because the table needs
   their values.
 - `extract()` opens the store on every call. For many selections from one
