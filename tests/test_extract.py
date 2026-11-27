@@ -836,3 +836,54 @@ def test_coordinates_are_read_whole(grid: Path) -> None:
 
     for name in ("time", "lat", "lon"):
         assert len(store.chunk_reads(name)) == 1
+
+
+@pytest.mark.parametrize(
+    ("selection", "problem"),
+    [
+        (float("nan"), "The selection for 'lat' is NaN."),
+        (np.float64("nan"), "The selection for 'lat' is NaN."),
+        ((float("nan"), 10), "The selection for 'lat' has a NaN end."),
+        ((0, float("nan")), "The selection for 'lat' has a NaN end."),
+        ([np.float32("nan"), 10], "The selection for 'lat' has a NaN end."),
+        (float("inf"), "The selection for 'lat' is infinite"),
+        (float("-inf"), "The selection for 'lat' is infinite"),
+        (np.float64("inf"), "The selection for 'lat' is infinite"),
+    ],
+)
+def test_nan_and_infinite_scalars_are_rejected_before_any_read(
+    tmp_path: Path, selection: Any, problem: str
+) -> None:
+    # The store does not exist: the error comes before it is opened.
+    with pytest.raises(zarrextract.SelectionError) as info:
+        extract(tmp_path / "missing.zarr", "temp", lat=selection)
+
+    assert str(info.value).startswith(problem)
+
+
+def test_nan_is_rejected_on_any_dimension(grid: Path) -> None:
+    with pytest.raises(zarrextract.SelectionError, match="'lon' is NaN"):
+        extract(grid, "temp", time="2000-01-01", lat=0, lon=float("nan"))
+
+
+@pytest.mark.parametrize(
+    ("selection", "lats"),
+    [
+        ((float("-inf"), 0), [0.0, -45.0, -90.0]),
+        ((0, float("inf")), [90.0, 45.0, 0.0]),
+        ((float("-inf"), float("inf")), LATS),
+        ((np.float64("-inf"), 0), [0.0, -45.0, -90.0]),
+    ],
+)
+def test_infinite_range_ends_stay_open(
+    grid: Path, selection: Any, lats: list[float]
+) -> None:
+    table = extract(grid, "temp", time="2000-01-01", lon=0, lat=selection)
+
+    assert sorted(table["lat"].to_pylist(), reverse=True) == lats
+    recorded = zarrextract.provenance(table)
+    assert recorded is not None
+    assert recorded.selections["lat"] == [
+        "-inf" if np.isneginf(selection[0]) else selection[0],
+        "inf" if np.isposinf(selection[1]) else selection[1],
+    ]

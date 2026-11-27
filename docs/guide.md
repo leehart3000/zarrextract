@@ -30,6 +30,11 @@ return the edge of the grid. A range that matches no values raises
 `EmptySelectionError`. Naming a dimension the variable does not have raises
 `UnknownDimensionError`.
 
+`NaN` is never a valid selection, and neither is an infinite single value, as
+it has no nearest coordinate: both raise `SelectionError` before anything is
+read. An infinite end of a range leaves it open, so `lat=(float("-inf"), 10)`
+picks every latitude up to 10.
+
 `storage_options` is not a selection, so a dimension cannot be called
 `storage_options`.
 
@@ -196,6 +201,89 @@ values.
 - In Zarr v2 stores, the `fill_value` in the array metadata also becomes null,
   as in xarray. In Zarr v3 the fill value is always set (often 0), so only
   the attributes count.
+
+## Provenance and saving
+
+Every table from `extract()` records where it came from, as schema metadata
+under keys that start with `zarrextract.`:
+
+- `zarrextract.provenance_version`: the layout of this metadata, currently `1`.
+- `zarrextract.source`: the store, as given, without credentials (see below).
+- `zarrextract.variable`: the variable.
+- `zarrextract.selections`: the selections as given, as JSON. Dates are ISO
+  strings and a `(start, stop)` pair is a list. Values are not converted, so
+  `lon=-10` stays `-10`. An infinite end of a range is written as the string
+  `"inf"` or `"-inf"`.
+- `zarrextract.version`: the zarrextract version.
+- `zarrextract.extracted_at`: the time of extraction, in UTC, to the second.
+
+The `units` and `long_name` attributes of the variable and of the coordinates
+are the metadata of their columns (the Arrow fields). A decoded time column
+has no `units`, because `days since ...` describes the stored numbers, not the
+timestamps. The columns and values of the table are the same as without the
+metadata, and comparing tables with `Table.equals()` ignores it unless you pass
+`check_metadata=True`.
+
+`storage_options` is never recorded. The user name, password, query string and
+fragment are removed from the store URL, so `https://me:pw@host/s.zarr?token=x`
+is recorded as `https://host/s.zarr`. A secret that is part of the URL path
+can't be recognised, and a local path is recorded as you gave it.
+
+The same rule applies to the errors and warnings of zarrextract: a URL in a
+message has its credentials removed. Such an error is raised without the
+original error as its cause or context, so a traceback can't show them either.
+That also hides the original traceback, which makes some failures harder to
+debug.
+
+### Saving a table
+
+`zx.write(table, path, overwrite=False)` writes to a local file. The suffix
+selects the format, whatever its case:
+
+| Suffix | Format |
+|---|---|
+| `.parquet` | Parquet, compressed with zstd |
+| `.arrow`, `.feather` | The Arrow IPC file format (Feather version 2), uncompressed |
+| `.csv` | CSV, with a metadata file next to it |
+
+```python
+series = zx.extract(
+    "era5.zarr", "t2m", lat=51.5, lon=-0.1, time=("2020-01-01", "2020-12-31")
+)
+zx.write(series, "series.parquet")
+```
+
+`write()` returns the paths it wrote as a tuple. It raises
+`UnsupportedFormatError` for a URL, a missing suffix or an unknown one, and
+`OutputExistsError` if the file exists, unless you pass `overwrite=True`. It
+writes to temporary files in the same directory and then moves them into
+place, so if writing fails, a file that is already there is left as it was and
+the temporary files are removed.
+
+Parquet and Arrow files keep the schema and field metadata, so the provenance
+and the units survive. Parquet has no unit of seconds, so a `timestamp[s]`
+column is stored in milliseconds and reads back as `timestamp[ms]`, with the
+same values.
+
+CSV can't hold metadata, so `write()` also writes `series.csv.json`: the file
+name with `.json` added. It holds the schema metadata (`selections` as a JSON
+object), and the Arrow type, units and long name of each column, which lets a
+reader restore the types that CSV loses, such as timestamps. It is written for
+every CSV, and `write()` won't replace it without `overwrite=True`.
+
+### Reading the provenance
+
+`zx.provenance(table_or_path)` returns a `Provenance` with the fields of the
+table above, parsed: `selections` is a dict, `extracted_at` a timezone-aware
+`datetime`, and `columns` holds the units and long names. For a file it reads
+only the schema (for a CSV, the `.csv.json` file), not the data. It returns
+`None` if there is no provenance, and raises `ZarrExtractError` if it is
+malformed or comes from a newer layout.
+
+```python
+info = zx.provenance("series.parquet")
+info.source, info.selections, info.extracted_at
+```
 
 ## Remote stores
 

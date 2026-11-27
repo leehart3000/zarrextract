@@ -2,14 +2,14 @@
 
 import os
 import sys
-from collections.abc import Iterator, Mapping
-from contextlib import contextmanager
+from collections.abc import Callable, Mapping
 from typing import Any
 
 import zarr
 import zarr.errors
 
 from zarrextract._errors import StoreOpenError
+from zarrextract._provenance import redact_urls
 
 
 def is_client_error(exc: BaseException) -> bool:
@@ -30,18 +30,26 @@ def is_client_error(exc: BaseException) -> bool:
     return False
 
 
-@contextmanager
-def wrap_client_errors(target: str) -> Iterator[None]:
-    """Raise ``StoreOpenError`` for HTTP client and fsspec errors."""
+def call_wrapped[T](target: str, func: Callable[[], T]) -> T:
+    """Call ``func``, raising ``StoreOpenError`` for HTTP client and fsspec errors.
+
+    The message has the credentials removed from every URL in it. The new error
+    is raised after the ``except`` block and ``from None``, so that neither its
+    ``__cause__`` nor its ``__context__`` holds the original error, whose text and
+    traceback can show the raw URL. A context manager could not do this: an error
+    raised while one exits always gets the original as its ``__context__``.
+    """
+    message: str
     try:
-        yield
+        return func()
     except Exception as exc:
-        if is_client_error(exc):
-            raise StoreOpenError(
-                f"Cannot read {target!r}: the server or the connection failed "
-                f"({type(exc).__name__}: {exc})."
-            ) from exc
-        raise
+        if not is_client_error(exc):
+            raise
+        message = (
+            f"Cannot read {target!r}: the server or the connection failed "
+            f"({type(exc).__name__}: {exc})."
+        )
+    raise StoreOpenError(redact_urls(message)) from None
 
 
 def open_group(
@@ -55,24 +63,26 @@ def open_group(
     the fsspec backend.
     """
     target = os.fspath(store)
+    options = None if storage_options is None else dict(storage_options)
+    failure: str
     try:
-        with wrap_client_errors(target):
-            return zarr.open_group(
-                target,
-                mode="r",
-                use_consolidated=None,
-                storage_options=None
-                if storage_options is None
-                else dict(storage_options),
-            )
+        return call_wrapped(
+            target,
+            lambda: zarr.open_group(
+                target, mode="r", use_consolidated=None, storage_options=options
+            ),
+        )
     except ImportError as exc:
-        raise StoreOpenError(
+        failure = (
             f"Cannot open {target!r}: a required package is missing ({exc}). "
             "URLs need fsspec and the backend for their protocol, for example "
             "s3fs for s3:// or gcsfs for gs://."
-        ) from exc
+        )
     except (OSError, ValueError, zarr.errors.BaseZarrError) as exc:
-        raise StoreOpenError(f"Cannot open {target!r} as a Zarr group: {exc}") from exc
+        failure = f"Cannot open {target!r} as a Zarr group: {exc}"
+    # Raised outside the handlers and from None, so the original error, whose
+    # text can hold credentials, is not kept as the cause or the context.
+    raise StoreOpenError(redact_urls(failure)) from None
 
 
 def dimension_names(array: zarr.Array[Any]) -> tuple[str, ...] | None:

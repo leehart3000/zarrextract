@@ -35,9 +35,8 @@ series = zx.extract(
 )
 box = zx.extract("era5.zarr", "t2m", lat=(50, 52), lon=(-1, 1), time="2020-06-01")
 
-import pyarrow.parquet as pq
-
-pq.write_table(series, "series.parquet")
+zx.write(series, "series.parquet")  # keeps the provenance and units
+print(zx.provenance("series.parquet").selections)
 ```
 
 ```{toctree}

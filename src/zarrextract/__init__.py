@@ -9,12 +9,15 @@ from zarrextract._errors import (
     MissingDimensionNamesError,
     OmeMetadataError,
     OmeMetadataWarning,
+    OutputExistsError,
     SelectionError,
     StoreOpenError,
     TimeDecodingError,
     UnknownDimensionError,
     UnsupportedCalendarError,
+    UnsupportedFormatError,
     VariableNotFoundError,
+    WriteError,
     ZarrExtractError,
 )
 from zarrextract._extract import extract
@@ -28,6 +31,8 @@ from zarrextract._ome import (
     OmePlate,
     OmeWell,
 )
+from zarrextract._provenance import Provenance, provenance
+from zarrextract._write import write
 
 __version__ = version("zarrextract")
 
@@ -46,17 +51,23 @@ __all__ = [
     "OmeMultiscale",
     "OmePlate",
     "OmeWell",
+    "OutputExistsError",
+    "Provenance",
     "SelectionError",
     "StoreDescription",
     "StoreOpenError",
     "TimeDecodingError",
     "UnknownDimensionError",
     "UnsupportedCalendarError",
+    "UnsupportedFormatError",
     "VariableNotFoundError",
+    "WriteError",
     "ZarrExtractError",
     "__version__",
     "describe",
     "extract",
+    "provenance",
+    "write",
 ]
 
 # Show the public names as zarrextract.X, not by their private module paths.

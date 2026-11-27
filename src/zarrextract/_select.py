@@ -2,7 +2,7 @@
 
 import math
 import re
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from typing import Any
@@ -47,6 +47,35 @@ class Axis:
     def read(self, selected: slice) -> NDArray[Any]:
         """Return the decoded values in a slice."""
         return self.values[selected]
+
+
+def _as_float(value: object) -> float | None:
+    return float(value) if isinstance(value, float | np.floating) else None
+
+
+def check_finite(selections: Mapping[str, Any]) -> None:
+    """Reject selections that can match nothing sensible, before anything is read.
+
+    NaN is rejected as a scalar and as either end of a range. An infinite
+    scalar is rejected, as the nearest value to infinity means nothing. An
+    infinite end of a ``(start, stop)`` range is allowed: the range is open.
+    """
+    for name, value in selections.items():
+        if isinstance(value, tuple | list):
+            if any(math.isnan(x) for end in value if (x := _as_float(end)) is not None):
+                raise SelectionError(f"The selection for {name!r} has a NaN end.")
+            continue
+        number = _as_float(value)
+        if number is None:
+            continue
+        if math.isnan(number):
+            raise SelectionError(f"The selection for {name!r} is NaN.")
+        if math.isinf(number):
+            raise SelectionError(
+                f"The selection for {name!r} is infinite, so it has no nearest "
+                "value. Use an infinite end of a (start, stop) range for an open "
+                "range."
+            )
 
 
 Indices = slice | tuple[slice, slice]

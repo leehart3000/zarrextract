@@ -114,12 +114,20 @@ box = zx.extract("era5.zarr", "t2m", lat=(50, 52), lon=(-10, 10), time="2020-06-
 
 [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/leehart3000/zarrextract/blob/main/notebooks/ome_zarr_idr0051.ipynb) A third notebook that reads a pixel time series and a 2D slice of a light-sheet OME-Zarr image over HTTPS, in a store that cannot be listed (IDR idr0051, Steventon et al., CC BY 4.0; [data](https://doi.org/10.17867/10000117), [paper](https://doi.org/10.1242/dev.166728), [Image Data Resource](https://doi.org/10.1038/nmeth.4326)).
 
-### Write to Parquet
+### Save a table
+
+Every table records its provenance as schema metadata: the store (without
+credentials), the variable, the selections, the zarrextract version and the
+time of extraction, and the units of each column. `zx.write()` saves it to a
+local file, choosing the format from the suffix: `.parquet` (zstd), `.arrow` or
+`.feather` (Arrow IPC), or `.csv`. Parquet and Arrow files keep the metadata.
+CSV can't, so `series.csv` comes with `series.csv.json`.
 
 ```python
-import pyarrow.parquet as pq
+zx.write(series, "series.parquet")  # raises OutputExistsError if it exists
 
-pq.write_table(series, "series.parquet")
+info = zx.provenance("series.parquet")
+print(info.source, info.selections, info.extracted_at)
 ```
 
 ## Stores

@@ -11,6 +11,7 @@ import zarr
 import zarr.errors
 
 from zarrextract._errors import OmeMetadataError, OmeMetadataWarning
+from zarrextract._provenance import redact_urls
 
 SUPPORTED_VERSIONS = ("0.4", "0.5")
 
@@ -494,13 +495,18 @@ def _multiscale(
                 len(axes),
             )
         array_name = join_path(group_path, path)
+        cannot_open: str | None = None
         try:
             array = open_array(array_name)
         except (KeyError, FileNotFoundError, zarr.errors.BaseZarrError) as exc:
+            cannot_open = f"{type(exc).__name__}: {exc}"
+        if cannot_open is not None:
+            # Raised outside the handler and without a cause: the text of the
+            # original error can hold a URL with credentials. _bad() removes them.
             raise _Malformed(
                 f"{prefix}dataset {path!r} names the array {array_name!r}, which "
-                f"cannot be opened ({type(exc).__name__}: {exc})"
-            ) from exc
+                f"cannot be opened ({cannot_open})"
+            )
         if supported and array.ndim != len(axes):
             raise _Malformed(
                 f"{prefix}array {array_name!r} has {array.ndim} dimensions "
@@ -644,7 +650,9 @@ class OmeFinder:
         return node
 
     def _bad(self, where: str, problem: str, *, fatal: bool) -> None:
-        message = f"Invalid OME-Zarr metadata in group {where!r}: {problem}."
+        message = redact_urls(
+            f"Invalid OME-Zarr metadata in group {where!r}: {problem}."
+        )
         if self._strict and fatal:
             raise OmeMetadataError(
                 f"{message} The store cannot be listed, so its arrays can only "
@@ -684,6 +692,7 @@ class OmeFinder:
                 )
             return
         attrs = dict(group.attrs)
+        bad: _Malformed | None = None
         try:
             meta = read_metadata(attrs)
             if needs is not None and (meta is None or needs[0] not in meta.keys):
@@ -694,7 +703,11 @@ class OmeFinder:
             if meta is None:
                 return
             parsed = self._parse(path, attrs, meta)
-        except _Malformed as bad:
+        except _Malformed as error:
+            bad = error
+        if bad is not None:
+            # Outside the handler, so the error raised for a fatal problem does
+            # not get this one as its context.
             self._bad(path, bad.problem, fatal=path == "" or bad.fatal)
             return
         self._follow(path, role, parsed)

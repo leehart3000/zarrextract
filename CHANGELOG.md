@@ -9,6 +9,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- `extract()` attaches its provenance to the table as schema metadata, under
+  keys that start with `zarrextract.`: the store, the variable, the selections
+  as given (JSON), the zarrextract version, the time of extraction in UTC and
+  a `provenance_version`. The `units` and `long_name` attributes of the
+  variable and the coordinates become the metadata of their fields. The
+  columns and values of the table do not change. `storage_options` is never
+  recorded, and the user name, password, query string and fragment are
+  removed from the store URL.
+- `write(table, path, *, overwrite=False)` writes a table to a local file in
+  the format of its suffix: `.parquet` (zstd), `.arrow` or `.feather` (Arrow
+  IPC), or `.csv`. Parquet and Arrow files keep the metadata. A CSV file gets
+  a `<name>.csv.json` file next to it with the metadata and the column types.
+  It writes to temporary files and moves them into place, so a failed write
+  never changes an existing file. It returns the paths written, and raises
+  the new `UnsupportedFormatError`
+  and `OutputExistsError`, which derive from the new `WriteError`.
+- `provenance()` reads the provenance back from a table, or from a Parquet,
+  Arrow or CSV file written by `write()`, as the new `Provenance` class.
 - `describe()` recognises OME-Zarr stores (OME-NGFF 0.4 and 0.5). The new
   `StoreDescription.ome` holds the images, label images, labels groups,
   plates, wells and bioformats2raw containers it finds, as the new classes
@@ -27,6 +45,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   malformed well or label, give the warning and the rest is described.
 - A Performance page in the docs, comparing extraction times with xarray, and
   the saved results of `notebooks/benchmarks.ipynb`.
+
+### Fixed
+
+- `extract()` raises `SelectionError` for a NaN selection, as a single value
+  or as an end of a range, and for an infinite single value, before reading
+  anything. A NaN selection used to return the first row silently. An
+  infinite end of a range still leaves it open, and is recorded in the
+  selections as the string `"inf"` or `"-inf"`.
+
+### Security
+
+- The messages of `StoreOpenError`, `OmeMetadataError` and
+  `OmeMetadataWarning` no longer show the user name, password, query string or
+  fragment of a URL, in the store URL or in the text of the underlying error.
+  These errors are now raised without the original error as their `__cause__`
+  or `__context__`, so a traceback doesn't show the raw URL either. This also
+  hides the original traceback.
 
 ## [0.3.0] - 2026-11-26
 

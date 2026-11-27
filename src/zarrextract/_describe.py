@@ -9,7 +9,8 @@ import zarr
 
 from zarrextract._errors import StoreOpenError, VariableNotFoundError
 from zarrextract._ome import OmeFinder, OmeGroup, OmeImage
-from zarrextract._store import dimension_names, open_group, wrap_client_errors
+from zarrextract._provenance import redact_urls
+from zarrextract._store import call_wrapped, dimension_names, open_group
 
 
 @dataclass(frozen=True, slots=True)
@@ -204,12 +205,14 @@ def describe(
         _node_opener(group, members, complete=listed and max_depth is None),
         strict=not listed,
     )
-    with wrap_client_errors(target):
-        finder.run(
+    call_wrapped(
+        target,
+        lambda: finder.run(
             path
             for path, node in (members or {}).items()
             if isinstance(node, zarr.Group)
-        )
+        ),
+    )
 
     arrays: dict[str, zarr.Array[Any]]
     if members is not None:
@@ -221,11 +224,14 @@ def describe(
             if max_depth is None or path.count("/") <= max_depth
         }
     else:
+        # From None: the listing error's text and traceback can show credentials.
         raise StoreOpenError(
-            f"Cannot list the arrays in {target!r}: the store cannot be listed "
-            f"({type(list_error).__name__}: {list_error}) and it has no "
-            "consolidated metadata. extract() still works if you know the "
-            "array's path."
-        ) from list_error
+            redact_urls(
+                f"Cannot list the arrays in {target!r}: the store cannot be listed "
+                f"({type(list_error).__name__}: {list_error}) and it has no "
+                "consolidated metadata. extract() still works if you know the "
+                "array's path."
+            )
+        ) from None
     infos = tuple(_array_info(name, arrays[name]) for name in sorted(arrays))
     return StoreDescription(arrays=infos, ome=finder.entries)

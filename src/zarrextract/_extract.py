@@ -18,8 +18,9 @@ from zarrextract._errors import (
     ZarrExtractError,
 )
 from zarrextract._probe import LazyAxis
-from zarrextract._select import Axis, Selection, select
-from zarrextract._store import dimension_names, open_group, wrap_client_errors
+from zarrextract._provenance import field_metadata, provenance_metadata
+from zarrextract._select import Axis, Selection, check_finite, select
+from zarrextract._store import call_wrapped, dimension_names, open_group
 
 BISECT_MIN_CHUNKS = 8
 """Selected coordinates with more chunks than this are searched by bisection."""
@@ -44,6 +45,8 @@ def extract(
     * a scalar picks the nearest coordinate value, so the dimension has length
       1. A scalar more than one grid step outside the coordinates is an error.
     * a ``(start, stop)`` pair picks every value from start to stop, inclusive.
+      An infinite end, such as ``(-inf, 10)``, leaves the range open.
+      NaN, and an infinite scalar, raise ``SelectionError``.
     * a dimension without a keyword is kept whole.
 
     Coordinates may be ascending or descending. Longitudes are converted to the
@@ -70,6 +73,14 @@ def extract(
     more than 8 chunks is searched by bisection, which reads about one chunk
     per halving instead of the whole coordinate.
 
+    The table carries its provenance as schema metadata under keys that start
+    with ``zarrextract.``: the store (without any user name, password, query or
+    fragment), the variable, the selections as given, the zarrextract version
+    and the time of extraction in UTC. The ``units`` and ``long_name``
+    attributes of the variable and the coordinates are the metadata of their
+    fields. ``storage_options`` is never recorded. Use ``provenance()`` to read
+    it back, and ``write()`` to save a table with it.
+
     ``storage_options`` is not a selection. It is passed to the fsspec backend,
     for example ``{"anon": True}`` to read a public S3 bucket without
     credentials, so a dimension cannot be called ``storage_options``.
@@ -85,10 +96,18 @@ def extract(
         TimeDecodingError: Time units or values cannot be decoded.
             ``UnsupportedCalendarError`` is a subclass.
     """
-    with wrap_client_errors(os.fspath(store)):
-        return _extract_from_group(
+    check_finite(selections)
+    target = os.fspath(store)
+
+    def run() -> pa.Table:
+        table = _extract_from_group(
             open_group(store, storage_options), variable, selections
         )
+        return table.replace_schema_metadata(
+            provenance_metadata(target, variable, selections)
+        )
+
+    return call_wrapped(target, run)
 
 
 def _find_array(group: zarr.Group, variable: str) -> "zarr.Array[Any]":
@@ -106,11 +125,12 @@ def _find_array(group: zarr.Group, variable: str) -> "zarr.Array[Any]":
 
 def _read_axis(
     group: zarr.Group, dim: str, length: int, *, selected: bool = False
-) -> Axis | LazyAxis:
+) -> tuple[Axis | LazyAxis, dict[str, str] | None]:
     """Read the coordinate for a dimension, or use its index if it has none.
 
     A selected coordinate with more than ``BISECT_MIN_CHUNKS`` chunks is not read
     here. It comes back as a ``LazyAxis`` that is searched by bisection.
+    The second value is the metadata (units and long name) of its Arrow field.
     """
     try:
         node = group[dim]
@@ -130,27 +150,37 @@ def _read_axis(
             and -(-length // node.chunks[0]) > BISECT_MIN_CHUNKS
         ):
             time_units = kind != "M" and is_time_units(units)
-            return LazyAxis(
-                node,
-                dim,
-                units=units if time_units and isinstance(units, str) else None,
-                calendar=attrs.get("calendar"),
-                is_time=kind == "M" or time_units,
-                is_longitude=kind != "M"
-                and not time_units
-                and is_longitude(dim, attrs),
+            is_time = kind == "M" or time_units
+            return (
+                LazyAxis(
+                    node,
+                    dim,
+                    units=units if time_units and isinstance(units, str) else None,
+                    calendar=attrs.get("calendar"),
+                    is_time=is_time,
+                    is_longitude=kind != "M"
+                    and not time_units
+                    and is_longitude(dim, attrs),
+                ),
+                field_metadata(attrs, decoded_time=is_time),
             )
         values = np.asarray(node[...])
         if values.dtype.kind == "M":
-            return Axis(dim, values, is_time=True)
+            return Axis(dim, values, is_time=True), field_metadata(
+                attrs, decoded_time=True
+            )
         if is_time_units(units):
             assert isinstance(units, str)
             decoded = decode_time(values, units, attrs.get("calendar"))
-            return Axis(dim, decoded, is_time=True)
+            return Axis(dim, decoded, is_time=True), field_metadata(
+                attrs, decoded_time=True
+            )
         if values.dtype.kind == "T":
             values = values.astype(object)
-        return Axis(dim, values, is_longitude=is_longitude(dim, attrs))
-    return Axis(dim, np.arange(length))
+        return Axis(dim, values, is_longitude=is_longitude(dim, attrs)), field_metadata(
+            attrs, decoded_time=False
+        )
+    return Axis(dim, np.arange(length)), None
 
 
 def _join_indices(parts: tuple[slice, ...]) -> NDArray[np.intp]:
@@ -188,10 +218,12 @@ def _extract_from_group(
             f"Its dimensions are {', '.join(dims)}."
         )
 
-    axes = [
+    read = [
         _read_axis(group, dim, length, selected=dim in selections)
         for dim, length in zip(dims, array.shape, strict=True)
     ]
+    axes = [axis for axis, _ in read]
+    field_metadata_by_column = [meta for _, meta in read]
     slices = [
         select(axis, selections[axis.name])
         if axis.name in selections
@@ -236,4 +268,13 @@ def _extract_from_group(
     columns.append(
         pa.array(values.ravel(), mask=None if mask is None else mask.ravel())
     )
-    return pa.Table.from_arrays(columns, names=[*dims, variable])
+    field_metadata_by_column.append(field_metadata(array.attrs, decoded_time=False))
+    schema = pa.schema(
+        [
+            pa.field(name, column.type, metadata=meta)
+            for name, column, meta in zip(
+                [*dims, variable], columns, field_metadata_by_column, strict=True
+            )
+        ]
+    )
+    return pa.Table.from_arrays(columns, schema=schema)

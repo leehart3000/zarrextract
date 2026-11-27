@@ -10,6 +10,16 @@ Functions
 
 .. autofunction:: extract
 
+.. autofunction:: write
+
+.. autofunction:: provenance
+
+Provenance
+----------
+
+.. autoclass:: Provenance
+   :members:
+
 Store description
 -----------------
 
@@ -71,6 +81,12 @@ Exceptions
 .. autoexception:: UnsupportedCalendarError
 
 .. autoexception:: OmeMetadataError
+
+.. autoexception:: WriteError
+
+.. autoexception:: UnsupportedFormatError
+
+.. autoexception:: OutputExistsError
 
 Warnings
 --------

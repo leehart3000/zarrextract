@@ -60,6 +60,18 @@ class OmeMetadataWarning(UserWarning):
     """
 
 
+class WriteError(ZarrExtractError):
+    """A table could not be written to a file by ``write()``."""
+
+
+class UnsupportedFormatError(WriteError, ValueError):
+    """The path has no suffix, an unknown suffix, or is not a local path."""
+
+
+class OutputExistsError(WriteError, FileExistsError):
+    """The file exists, and ``overwrite`` is not set."""
+
+
 class TimeDecodingError(ZarrExtractError):
     """Time values or units could not be decoded."""
 
