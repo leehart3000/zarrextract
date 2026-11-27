@@ -183,15 +183,59 @@ values.
   scalar, which picks the nearest value.
 - **Units:** days, hours, minutes, seconds, milliseconds and microseconds,
   and their usual abbreviations. The reference date must be in UTC.
-- **Calendars:** `standard`, `gregorian`, `proleptic_gregorian`, `noleap` and
-  `365_day`. Dates in the `standard` and `gregorian` calendars before
-  1582-10-15 are not supported. Other calendars, such as `360_day`, `all_leap`
-  and `julian`, raise `UnsupportedCalendarError`. In the `noleap` calendar the
-  times decode to ordinary dates, so a selection on 29 February picks the
-  nearest value.
+- **Calendars:** `standard`, `gregorian`, `proleptic_gregorian`, `noleap`,
+  `365_day`, `360_day`, `all_leap` and `366_day`. Dates in the `standard` and
+  `gregorian` calendars before 1582-10-15 are not supported. Other calendars,
+  such as `julian` and `none`, raise `UnsupportedCalendarError`. In the
+  `noleap` calendar the times decode to ordinary dates, so a selection on 29
+  February picks the nearest value. The `360_day` and `all_leap` calendars
+  have dates that are not timestamps, so their time column is different: see
+  [below](#day-and-all-leap).
 - **Resolution:** the timestamp unit follows the time units: `s` for days,
   hours, minutes and seconds, `ms` for milliseconds and `us` for microseconds.
   Far-future dates, such as the year 2300 in CMIP6 scenarios, therefore fit.
+
+### 360_day and all_leap
+
+The `360_day` calendar has 12 months of 30 days, so it has 30 February. The
+`all_leap` calendar (also called `366_day`) has 29 February in every year.
+Neither can be held by a timestamp, which is why the Met Office models in
+CMIP6 (HadGEM3, UKESM1) could not be read before. For these calendars:
+
+- **The time column holds ISO 8601 strings** of one fixed width, such as
+  `"2000-02-30T00:00:00"`. A time in milliseconds or microseconds ends in
+  `.fff` or `.ffffff`. The width never changes, so the strings sort in the
+  order of the times. The field metadata of the column has `calendar`, such as
+  `"360_day"`, because the strings do not say it, and `Provenance.columns`
+  has it too. A time that is missing in the store is a null.
+- **Selections are read in the store's own calendar.** `("2000-02",
+  "2000-02")` is all 30 days of February in `360_day` and 29 days in
+  `all_leap`, `("2000", "2000")` is the 360 or 366 days of the year, and
+  `"2000-02-30"` is a valid date in `360_day`. A scalar picks the nearest
+  value, as in any calendar.
+- **`date`, `datetime` and `numpy.datetime64`** are read by their year, month,
+  day and time of day, as a label in the store's calendar: `date(2000, 6, 15)`
+  is 15 June in `360_day`. An aware `datetime` is converted to UTC first.
+- **A date that does not exist is an error**, never the nearest value:
+  `"2000-02-31"` or `date(2000, 1, 31)` in `360_day`, and `"2001-04-31"` in
+  `all_leap`, raise `SelectionError`. This includes the end of a range, so
+  `("2000-01-01", "2000-12-31")` fails in `360_day`. The message suggests
+  `"2000-12-30"`, or `"2000-12"` for the whole month.
+- **Units** are days, hours, minutes, seconds, milliseconds and microseconds,
+  and the reference date is read in the calendar, so `days since 2000-02-30`
+  is valid in `360_day`. Months and years are not supported: in CF a month is
+  a fixed fraction of a year, not a calendar month, even in `360_day`.
+- **Years** must be from 0000 to 9999, so that every string has four digits
+  for the year.
+
+Parquet and Arrow files keep the strings and the `calendar` metadata. A CSV
+file has the strings, and its `.csv.json` file has the column type `string`
+and the calendar. Some CSV readers turn a column of ISO strings into
+timestamps when all of the dates happen to exist in the Gregorian calendar.
+Read the column as a string to avoid that, for example with
+`pyarrow.csv.ConvertOptions(column_types={"time": pyarrow.string()})`. To do
+arithmetic on the dates, convert them with cftime, for example
+`cftime.datetime(2000, 2, 30, calendar="360_day")`.
 
 ## Missing values
 

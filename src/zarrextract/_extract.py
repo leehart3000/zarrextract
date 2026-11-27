@@ -11,7 +11,15 @@ import zarr
 from numpy.typing import NDArray
 
 from zarrextract._cache import AxisEntry, Cache
-from zarrextract._cf import decode_time, is_longitude, is_time_units, unpack
+from zarrextract._calendar import Clock
+from zarrextract._cf import (
+    decode_calendar_ticks,
+    decode_time_with,
+    is_longitude,
+    is_time_units,
+    parse_time_encoding,
+    unpack,
+)
 from zarrextract._errors import (
     MissingDimensionNamesError,
     UnknownDimensionError,
@@ -67,6 +75,12 @@ def extract(
     CF time coordinates (``"<unit> since <date>"`` with the standard,
     gregorian, proleptic_gregorian, noleap or 365_day calendar) become Arrow
     timestamps whose unit is ``s``, ``ms`` or ``us`` to match the time units.
+    In the 360_day and all_leap (366_day) calendars some dates, such as 30
+    February, are not timestamps, so the time column holds ISO 8601 strings of
+    one fixed width (``"2000-02-30T00:00:00"``) and its field metadata has
+    ``calendar``. Selections on such a coordinate are read in its own calendar:
+    ``"2000-02"`` is 30 days in 360_day, ``"2000-02-30"`` is valid there, and a
+    date that does not exist in the calendar raises ``SelectionError``.
     ``scale_factor`` and ``add_offset`` are applied, and ``_FillValue`` and
     ``missing_value`` become nulls. In Zarr v2 so does the fill value in the
     array metadata, as in xarray; in Zarr v3 only the attributes count. Only
@@ -166,18 +180,20 @@ def _build_axis(
         if lazy:
             time_units = kind != "M" and is_time_units(units)
             is_time = kind == "M" or time_units
-            return (
-                LazyAxis(
-                    node,
-                    dim,
-                    units=units if time_units and isinstance(units, str) else None,
-                    calendar=attrs.get("calendar"),
-                    is_time=is_time,
-                    is_longitude=kind != "M"
-                    and not time_units
-                    and is_longitude(dim, attrs),
-                ),
-                field_metadata(attrs, decoded_time=is_time),
+            axis = LazyAxis(
+                node,
+                dim,
+                units=units if time_units and isinstance(units, str) else None,
+                calendar=attrs.get("calendar"),
+                is_time=is_time,
+                is_longitude=kind != "M"
+                and not time_units
+                and is_longitude(dim, attrs),
+            )
+            return axis, field_metadata(
+                attrs,
+                decoded_time=is_time,
+                calendar=axis.clock.calendar if axis.clock else None,
             )
         values = np.asarray(node[...])
         if values.dtype.kind == "M":
@@ -186,7 +202,15 @@ def _build_axis(
             )
         if is_time_units(units):
             assert isinstance(units, str)
-            decoded = decode_time(values, units, attrs.get("calendar"))
+            encoding = parse_time_encoding(units, attrs.get("calendar"))
+            if encoding.clock is not None:
+                ticks = decode_calendar_ticks(values, encoding)
+                return Axis(
+                    dim, _frozen(ticks), is_time=True, clock=encoding.clock
+                ), field_metadata(
+                    attrs, decoded_time=True, calendar=encoding.clock.calendar
+                )
+            decoded = decode_time_with(values, encoding)
             return Axis(dim, _frozen(decoded), is_time=True), field_metadata(
                 attrs, decoded_time=True
             )
@@ -208,7 +232,14 @@ def _join_indices(parts: tuple[slice, ...]) -> NDArray[np.intp]:
     return np.concatenate([np.arange(part.start, part.stop) for part in parts])
 
 
-def _column(values: NDArray[Any], inner: int, outer: int) -> pa.Array:
+def _column(
+    values: NDArray[Any], inner: int, outer: int, clock: Clock | None = None
+) -> pa.Array:
+    if clock is not None:
+        # Write each distinct time once, then repeat the strings.
+        strings = clock.format(values)
+        positions = np.tile(np.repeat(np.arange(len(values)), inner), outer)
+        return strings.take(pa.array(positions))
     repeated = np.tile(np.repeat(values, inner), outer)
     if repeated.dtype.kind == "M":
         unit, _ = np.datetime_data(repeated.dtype)
@@ -291,6 +322,7 @@ def extract_from_cache(
             np.concatenate([axis.read(part) for part in parts]),
             inner=math.prod(sizes[k + 1 :]),
             outer=math.prod(sizes[:k]),
+            clock=axis.clock,
         )
         for k, (axis, parts) in enumerate(zip(axes, runs, strict=True))
     ]

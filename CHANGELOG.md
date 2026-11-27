@@ -7,6 +7,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- Support for the CF calendars `360_day`, `all_leap` and its alias `366_day`.
+  Some of their dates, such as 30 February, are not timestamps, so the time
+  column of these calendars holds ISO 8601 strings of one fixed width, such as
+  `"2000-02-30T00:00:00"` (with `.fff` or `.ffffff` for milliseconds or
+  microseconds), and a missing time is a null. The field metadata of the
+  column has `calendar`, and so has `Provenance.columns`. The other calendars
+  keep their `timestamp` columns.
+- Selections on these calendars are read in the store's own calendar:
+  `("2000-02", "2000-02")` covers 30 days in `360_day`, and `"2000-02-30"` is
+  valid there. `date`, `datetime` and `numpy.datetime64` selections are read by
+  their fields. A date that does not exist in the calendar, such as
+  `"2000-02-31"` in `360_day`, raises `SelectionError`, also as the end of a
+  range. Bisection on a long coordinate works as for other calendars.
+- The reference date of the time units is read in the calendar, so
+  `days since 2000-02-30` is valid in `360_day`. Years from 0000 to 9999 are
+  supported. Months and years as units are still not supported, and the error
+  says why.
+
+### Changed
+
+- A selection such as `"2001-02-29"` on a time coordinate in any other
+  calendar now says that the date is not valid and which month has no such
+  day, instead of repeating NumPy's message.
+- `UnsupportedCalendarError` for `julian`, `none` and other calendars now
+  lists `360_day`, `all_leap` and `366_day` as supported.
+- Documentation and notebooks: the Performance page says "about the same"
+  where the two times are within 10% (case 4). The README, the documentation
+  home page and the contributor guide mention saving tables with `zx.write()`.
+  The benchmarks notebook no longer ends with an empty cell. The OME-Zarr
+  notebook now uses `zx.open()` and `describe()` on the IDR store, reads the
+  scale of each level from the `OmeImage`, and ends with a section that saves
+  the time series to Parquet and reads its provenance back. The guide and the
+  README describe the new calendars.
+
 ### Fixed
 
 - On a handle from `zx.open()`, a time range that covers several chunks of a
@@ -15,17 +51,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   one array read, so that they are fetched together, and kept. A repeated
   range reads no coordinate chunks, and an overlapping range reads only the
   new ones. The results do not change.
-
-### Changed
-
-- Documentation and notebooks only, with no change to the package. The
-  Performance page says "about the same" where the two times are within 10%
-  (case 4). The README, the documentation home page and the contributor guide
-  mention saving tables with `zx.write()`. The benchmarks notebook no longer
-  ends with an empty cell. The OME-Zarr notebook now uses `zx.open()` and
-  `describe()` on the IDR store, reads the scale of each level from the
-  `OmeImage`, and ends with a section that saves the time series to Parquet
-  and reads its provenance back.
 
 ## [0.4.0] - 2026-11-27
 

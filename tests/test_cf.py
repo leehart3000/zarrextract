@@ -145,7 +145,7 @@ def test_supported_calendars(calendar: str | None) -> None:
 
 @pytest.mark.parametrize(
     "calendar",
-    ["all_leap", "366_day", "360_day", "julian", "none", "", 5],
+    ["julian", "none", "", 5],
 )
 def test_unsupported_calendars(calendar: object) -> None:
     with pytest.raises(UnsupportedCalendarError, match="noleap and 365_day"):

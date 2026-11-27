@@ -9,6 +9,7 @@ from typing import Any
 import numpy as np
 from numpy.typing import NDArray
 
+from zarrextract._calendar import CLOCK_CALENDARS, MISSING, Clock, Fields
 from zarrextract._errors import TimeDecodingError, UnsupportedCalendarError
 
 # Each unit maps to (resolution of the decoded values, ticks per unit). The
@@ -45,7 +46,9 @@ _TICK_LIMIT = 2**62
 
 _MIXED_CALENDARS = {"standard", "gregorian"}
 _NOLEAP_CALENDARS = {"noleap", "365_day"}
-_SUPPORTED_CALENDARS = _MIXED_CALENDARS | {"proleptic_gregorian"} | _NOLEAP_CALENDARS
+_SUPPORTED_CALENDARS = (
+    _MIXED_CALENDARS | {"proleptic_gregorian"} | _NOLEAP_CALENDARS | CLOCK_CALENDARS
+)
 _GREGORIAN_START = np.datetime64("1582-10-15", "us")
 
 # Days before the start of each month in a year without 29 February.
@@ -76,7 +79,8 @@ def is_longitude(name: str, attrs: Mapping[str, Any]) -> bool:
     return name.lower() in {"lon", "longitude"}
 
 
-def _parse_reference(text: str) -> np.datetime64:
+def _reference_fields(text: str) -> Fields:
+    """Split a reference date into fields, checking its form and UTC offset."""
     match = _REFERENCE_RE.match(text)
     if match is None:
         raise TimeDecodingError(
@@ -92,10 +96,22 @@ def _parse_reference(text: str) -> np.datetime64:
                 "Only UTC (Z or +00:00) is supported."
             )
     fraction = (match["fraction"] or "")[:6].ljust(6, "0")
+    return (
+        int(match["year"]),
+        int(match["month"]),
+        int(match["day"]),
+        int(match["hour"] or 0),
+        int(match["minute"] or 0),
+        int(match["second"] or 0),
+        int(fraction),
+    )
+
+
+def _gregorian_reference(fields: Fields, text: str) -> np.datetime64:
+    year, month, day, hour, minute, second, micro = fields
     iso = (
-        f"{int(match['year']):04d}-{int(match['month']):02d}-{int(match['day']):02d}"
-        f"T{int(match['hour'] or 0):02d}:{int(match['minute'] or 0):02d}"
-        f":{int(match['second'] or 0):02d}.{fraction}"
+        f"{year:04d}-{month:02d}-{day:02d}"
+        f"T{hour:02d}:{minute:02d}:{second:02d}.{micro:06d}"
     )
     try:
         return np.datetime64(iso, "us")
@@ -103,7 +119,8 @@ def _parse_reference(text: str) -> np.datetime64:
         raise TimeDecodingError(f"Invalid reference date {text!r}: {exc}") from exc
 
 
-def _parse_units(units: str) -> tuple[str, int, np.datetime64]:
+def _parse_units(units: str) -> tuple[str, int, str]:
+    """Return the resolution, ticks per unit and the text of the reference date."""
     match = _UNITS_RE.match(units)
     if match is None:
         raise TimeDecodingError(
@@ -113,9 +130,11 @@ def _parse_units(units: str) -> tuple[str, int, np.datetime64]:
     if spec is None:
         raise TimeDecodingError(
             f"Unsupported time unit {match['unit']!r} in {units!r}. Supported units "
-            "are days, hours, minutes, seconds, milliseconds and microseconds."
+            "are days, hours, minutes, seconds, milliseconds and microseconds. "
+            "Months and years are not supported, because CF defines them as "
+            "fractions of a year, not as calendar months, in every calendar."
         )
-    return spec[0], spec[1], _parse_reference(match["ref"])
+    return spec[0], spec[1], match["ref"]
 
 
 def _check_calendar(calendar: object) -> str:
@@ -125,7 +144,8 @@ def _check_calendar(calendar: object) -> str:
     if name not in _SUPPORTED_CALENDARS:
         raise UnsupportedCalendarError(
             f"Unsupported calendar {calendar!r}. Supported calendars are standard, "
-            "gregorian, proleptic_gregorian, noleap and 365_day."
+            "gregorian, proleptic_gregorian, 360_day, all_leap, 366_day, noleap "
+            "and 365_day."
         )
     return name
 
@@ -179,9 +199,29 @@ class TimeEncoding:
     units: str
     resolution: str
     factor: int
-    reference: np.datetime64
-    """The reference date, at the resolution of the decoded values."""
+    reference: np.datetime64 | None
+    """The reference date at the resolution of the decoded values, or ``None``
+    for a calendar with a ``clock``."""
     calendar: str
+    clock: Clock | None = None
+    """Set for 360_day and all_leap, whose times are ticks, not ``datetime64``."""
+    reference_ticks: int = 0
+    """The reference date as ticks of the ``clock``."""
+
+
+def _clock_encoding(
+    units: str, resolution: str, factor: int, text: str, fields: Fields, name: str
+) -> TimeEncoding:
+    clock = Clock(name, resolution)
+    if clock.loses_precision(fields):
+        raise TimeDecodingError(
+            f"The reference date in {units!r} is finer than the unit allows."
+        )
+    try:
+        reference_ticks = clock.ticks(fields, text, TimeDecodingError)
+    except TimeDecodingError as exc:
+        raise TimeDecodingError(f"Invalid reference date in {units!r}: {exc}") from exc
+    return TimeEncoding(units, resolution, factor, None, name, clock, reference_ticks)
 
 
 def parse_time_encoding(units: str, calendar: object = None) -> TimeEncoding:
@@ -190,8 +230,12 @@ def parse_time_encoding(units: str, calendar: object = None) -> TimeEncoding:
     Raises the same errors as ``decode_time`` does for bad units, an unsupported
     calendar or a reference date the unit cannot hold.
     """
-    resolution, factor, reference = _parse_units(units)
+    resolution, factor, text = _parse_units(units)
+    fields = _reference_fields(text)
     name = _check_calendar(calendar)
+    if name in CLOCK_CALENDARS:
+        return _clock_encoding(units, resolution, factor, text, fields, name)
+    reference = _gregorian_reference(fields, text)
     if name in _MIXED_CALENDARS and reference < _GREGORIAN_START:
         raise UnsupportedCalendarError(
             f"The reference date in {units!r} is before 1582-10-15, where the "
@@ -206,27 +250,15 @@ def parse_time_encoding(units: str, calendar: object = None) -> TimeEncoding:
     return TimeEncoding(units, resolution, factor, reference_res, name)
 
 
-def decode_time(
-    values: NDArray[Any], units: str, calendar: object = None
-) -> NDArray[np.datetime64]:
-    """Decode CF time values to ``datetime64``.
-
-    The resolution follows the unit: ``s`` for days, hours, minutes and seconds,
-    ``ms`` for milliseconds and ``us`` for microseconds. Non-finite values
-    become ``NaT``.
-    """
-    return decode_time_with(values, parse_time_encoding(units, calendar))
-
-
-def decode_time_with(
+def _scaled_ticks(
     values: NDArray[Any], encoding: TimeEncoding
-) -> NDArray[np.datetime64]:
-    """Decode CF time values with units and calendar that are already parsed."""
-    units, resolution, factor = encoding.units, encoding.resolution, encoding.factor
-    reference_res, name = encoding.reference, encoding.calendar
-    mixed = name in _MIXED_CALENDARS
-    unit_type = f"datetime64[{resolution}]"
+) -> tuple[NDArray[np.int64], NDArray[np.bool_] | None]:
+    """Return time values as ticks of the resolution, and which are finite.
 
+    The second value is ``None`` for integers, which are always finite. The tick
+    of a value that is not finite is 0.
+    """
+    units, factor = encoding.units, encoding.factor
     array = np.asarray(values)
     if array.dtype.kind not in "iuf":
         raise TimeDecodingError(
@@ -246,6 +278,66 @@ def decode_time_with(
             if largest * factor >= _TICK_LIMIT:
                 raise TimeDecodingError(f"Time values in {units!r} are out of range.")
         ticks = integers * factor
+    return ticks, finite
+
+
+def decode_calendar_ticks(
+    values: NDArray[Any], encoding: TimeEncoding
+) -> NDArray[np.int64]:
+    """Decode CF time values in a 360_day or all_leap calendar to ticks.
+
+    Ticks count the resolution of the units since 0000-01-01T00:00:00 in the
+    calendar of ``encoding.clock``. Non-finite values become ``MISSING``.
+    """
+    clock = encoding.clock
+    if clock is None:
+        raise TimeDecodingError(
+            f"The {encoding.calendar!r} calendar has no ticks. Use decode_time_with()."
+        )
+    ticks, finite = _scaled_ticks(values, encoding)
+    total = ticks + encoding.reference_ticks
+    valid = total if finite is None else total[finite]
+    if valid.size and (valid.min() < 0 or valid.max() >= clock.limit):
+        raise TimeDecodingError(
+            f"Some times decoded from {encoding.units!r} fall outside the years "
+            f"0 to 9999 of the {encoding.calendar!r} calendar."
+        )
+    if finite is not None:
+        total[~finite] = MISSING
+    return total
+
+
+def decode_time(
+    values: NDArray[Any], units: str, calendar: object = None
+) -> NDArray[np.datetime64]:
+    """Decode CF time values to ``datetime64``.
+
+    The resolution follows the unit: ``s`` for days, hours, minutes and seconds,
+    ``ms`` for milliseconds and ``us`` for microseconds. Non-finite values
+    become ``NaT``.
+    """
+    return decode_time_with(values, parse_time_encoding(units, calendar))
+
+
+def decode_time_with(
+    values: NDArray[Any], encoding: TimeEncoding
+) -> NDArray[np.datetime64]:
+    """Decode CF time values with units and calendar that are already parsed.
+
+    Not for the calendars with a ``clock`` (360_day and all_leap): their dates
+    do not all exist in ``datetime64``. Use ``decode_calendar_ticks``.
+    """
+    units, resolution = encoding.units, encoding.resolution
+    reference_res, name = encoding.reference, encoding.calendar
+    if encoding.clock is not None or reference_res is None:
+        raise TimeDecodingError(
+            f"Times in the {name!r} calendar cannot all be datetime64 values. "
+            "Use decode_calendar_ticks()."
+        )
+    mixed = name in _MIXED_CALENDARS
+    unit_type = f"datetime64[{resolution}]"
+
+    ticks, finite = _scaled_ticks(values, encoding)
 
     decoded: NDArray[np.datetime64]
     if name in _NOLEAP_CALENDARS:

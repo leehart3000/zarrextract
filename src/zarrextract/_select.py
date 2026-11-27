@@ -2,6 +2,7 @@
 
 import math
 import re
+from calendar import month_name, monthrange
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
@@ -10,6 +11,7 @@ from typing import Any
 import numpy as np
 from numpy.typing import NDArray
 
+from zarrextract._calendar import MISSING, Clock, parse_iso_fields
 from zarrextract._errors import EmptySelectionError, SelectionError
 from zarrextract._probe import LazyAxis, not_monotonic_error
 
@@ -32,9 +34,12 @@ class Axis:
 
     name: str
     values: NDArray[Any]
-    """Decoded values: ``datetime64`` for time, otherwise as stored."""
+    """Decoded values: ``datetime64`` for time, otherwise as stored. For a time
+    axis with a ``clock`` they are ``int64`` ticks of that clock."""
     is_time: bool = False
     is_longitude: bool = False
+    clock: Clock | None = None
+    """Set for a time axis in the 360_day or all_leap calendar."""
 
     @property
     def dtype(self) -> np.dtype[Any]:
@@ -111,7 +116,8 @@ def select(axis: Axis | LazyAxis, selection: Selection) -> Indices:
 def _numeric(axis: Axis) -> NDArray[Any]:
     values = axis.values
     if axis.is_time:
-        if np.isnat(values).any():
+        missing = (values == MISSING) if axis.clock else np.isnat(values)
+        if missing.any():
             raise SelectionError(f"Time dimension {axis.name!r} contains NaT.")
         return values.astype(np.int64)
     if values.dtype.kind in "iu":
@@ -149,11 +155,21 @@ def _parse_iso(text: str) -> np.datetime64:
     try:
         return np.datetime64(cleaned)
     except ValueError as exc:
+        parsed = parse_iso_fields(cleaned)
+        if parsed is not None:
+            year, month, day = parsed[0][:3]
+            if 1 <= month <= 12 and day > monthrange(year, month)[1]:
+                raise SelectionError(
+                    f"{text!r} is not a valid date: {month_name[month]} {year} "
+                    f"has no day {day}."
+                ) from exc
         raise SelectionError(f"Cannot read {text!r} as a date or time: {exc}") from exc
 
 
 def _to_ticks(axis: Axis | LazyAxis, value: object) -> int:
     """Convert a time selection to integer ticks in the axis resolution."""
+    if axis.clock is not None:
+        return axis.clock.moment(value, axis.name)
     return _ticks(axis, _to_moment(axis, value))
 
 
@@ -168,6 +184,8 @@ def _bounds(axis: Axis | LazyAxis, value: object) -> tuple[int, int]:
     An ISO string given only to the year, month or day covers that whole
     period. Anything else covers the single tick it names.
     """
+    if axis.clock is not None:
+        return axis.clock.bounds(value, axis.name)
     moment = _to_moment(axis, value)
     first = _ticks(axis, moment)
     unit: Any = np.datetime_data(moment.dtype)[0]
@@ -329,11 +347,15 @@ def _outside(
 
 
 def _time_unit(axis: Axis | LazyAxis) -> str:
+    if axis.clock is not None:
+        return axis.clock.resolution
     return np.datetime_data(axis.dtype)[0]
 
 
 def _show(axis: Axis | LazyAxis, value: Any) -> str:
     """Format a coordinate value for an error message."""
+    if axis.clock is not None:
+        return axis.clock.show(int(value))
     if axis.is_time:
         ticks = np.array(int(value), dtype=np.int64)
         return str(ticks.astype(f"datetime64[{_time_unit(axis)}]"))

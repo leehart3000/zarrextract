@@ -27,7 +27,7 @@ SELECTIONS_KEY = f"{PREFIX}selections"
 PACKAGE_VERSION_KEY = f"{PREFIX}version"
 EXTRACTED_AT_KEY = f"{PREFIX}extracted_at"
 
-_FIELD_KEYS = ("units", "long_name")
+_FIELD_KEYS = ("units", "long_name", "calendar")
 
 # fsspec chains protocols with "::". The lookahead skips the "::" inside an
 # IPv6 host such as http://[::1]/.
@@ -112,12 +112,14 @@ def provenance_metadata(
 
 
 def field_metadata(
-    attrs: Mapping[str, Any], *, decoded_time: bool
+    attrs: Mapping[str, Any], *, decoded_time: bool, calendar: str | None = None
 ) -> dict[str, str] | None:
     """Return the ``units`` and ``long_name`` of an array for its Arrow field.
 
     The units of a decoded time coordinate (``"days since ..."``) describe the
-    stored encoding, not the timestamps, so they are left out.
+    stored encoding, not the timestamps, so they are left out. ``calendar`` is
+    given for a time column of ISO strings in the 360_day or all_leap calendar,
+    and is recorded as ``calendar``, because the strings do not say it.
     """
     metadata: dict[str, str] = {}
     units = attrs.get("units")
@@ -126,6 +128,8 @@ def field_metadata(
     long_name = attrs.get("long_name")
     if isinstance(long_name, str) and long_name:
         metadata["long_name"] = long_name
+    if calendar:
+        metadata["calendar"] = calendar
     return metadata or None
 
 
@@ -145,7 +149,9 @@ class Provenance:
             string ``"inf"`` or ``"-inf"``.
         version: The version of zarrextract that extracted the table.
         extracted_at: When the table was extracted, in UTC, to the second.
-        columns: The ``units`` and ``long_name`` of each column that has them.
+        columns: The ``units``, ``long_name`` and ``calendar`` of each column
+            that has them. ``calendar`` is set only for a time column of ISO
+            strings in the 360_day or all_leap calendar.
     """
 
     provenance_version: str

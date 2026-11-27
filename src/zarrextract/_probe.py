@@ -6,7 +6,8 @@ import numpy as np
 import zarr
 from numpy.typing import NDArray
 
-from zarrextract._cf import decode_time_with, parse_time_encoding
+from zarrextract._calendar import MISSING, Clock
+from zarrextract._cf import decode_calendar_ticks, decode_time_with, parse_time_encoding
 from zarrextract._errors import SelectionError
 
 
@@ -42,6 +43,10 @@ class LazyAxis:
         self._node = node
         # Parsed once here, not on every probe of a value.
         self._encoding = None if units is None else parse_time_encoding(units, calendar)
+        self.clock: Clock | None = (
+            None if self._encoding is None else self._encoding.clock
+        )
+        """Set for 360_day and all_leap, whose values are ticks, not datetime64."""
         self._chunk_size = node.chunks[0]
         self._chunks: dict[int, NDArray[Any]] = {}
         self._values: dict[int, Any] = {}
@@ -50,6 +55,8 @@ class LazyAxis:
     def _decode(self, raw: NDArray[Any]) -> NDArray[Any]:
         if self._encoding is None:
             return raw
+        if self._encoding.clock is not None:
+            return decode_calendar_ticks(raw, self._encoding)
         return decode_time_with(raw, self._encoding)
 
     def _chunk(self, k: int) -> NDArray[Any]:
@@ -66,7 +73,8 @@ class LazyAxis:
             decoded = self._decode(self._chunk(k)[offset : offset + 1])[0]
             number: Any
             if self.is_time:
-                if np.isnat(decoded):
+                missing = decoded == MISSING if self.clock else np.isnat(decoded)
+                if missing:
                     raise SelectionError(f"Time dimension {self.name!r} contains NaT.")
                 number = decoded.astype(np.int64)
             elif decoded.dtype.kind == "f":

@@ -100,6 +100,11 @@ def write(
     column is stored in milliseconds and reads back as ``timestamp[ms]``, with
     the same values.
 
+    A time column in the 360_day or all_leap calendar holds ISO 8601 strings
+    and has the calendar in its field metadata, which every format keeps (CSV
+    in the ``.csv.json`` file). A CSV reader may turn such strings into
+    timestamps, so read the column as a string.
+
     The files are first written under temporary names in the same directory,
     and then moved into place. If writing fails, a file that is already there
     is not changed, and the temporary files are removed.
