@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- A Performance page in the docs, comparing extraction times with xarray, and
+  the saved results of `notebooks/benchmarks.ipynb`.
+
 ## [0.3.0] - 2026-11-26
 
 ### Added

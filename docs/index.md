@@ -47,6 +47,7 @@ pq.write_table(series, "series.parquet")
 guide
 api
 examples
+performance
 changelog
 brand
 ```
