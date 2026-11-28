@@ -47,6 +47,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   day, instead of repeating NumPy's message.
 - `UnsupportedCalendarError` for `julian`, `none` and other calendars now
   lists `360_day`, `all_leap` and `366_day` as supported.
+- The Performance page and the benchmarks notebook have new results from a
+  run on 28 November 2026 with the faster search, including repeated
+  selections on an open store.
 - Documentation and notebooks: the Performance page says "about the same"
   where the two times are within 10% (case 4). The README, the documentation
   home page and the contributor guide mention saving tables with `zx.write()`.

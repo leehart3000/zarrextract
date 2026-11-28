@@ -6,9 +6,9 @@ numbers is `notebooks/benchmarks.ipynb`, and it opens in Google Colab.
 
 ## Method
 
-- One Google Colab session on 27 November 2026: Python 3.13, ZarrExtract
-  from `main` at commit d59caca (released as 0.4.0; the notebook prints
-  0.3.0 because the version number was raised afterwards), zarr 3.4.2,
+- One Google Colab session on 28 November 2026: Python 3.13, ZarrExtract
+  from `main` at commit 955c297 (released as 0.5.0; the notebook prints
+  0.4.0 because the version number was raised afterwards), zarr 3.4.2,
   xarray 2026.9.0, Dask 2026.8.0, fsspec and s3fs 2025.12.0.
 - Three contenders for one selection: `zx.extract`, xarray with Dask
   (`xr.open_zarr`, then `.sel(...).load()`), and xarray without Dask
@@ -23,8 +23,8 @@ numbers is `notebooks/benchmarks.ipynb`, and it opens in Google Colab.
   xarray's values were identical to ZarrExtract's.
 
 Timings over a network vary from run to run, so read the ratios rather
-than the exact seconds. For example, an earlier run on the same day took
-4.84 seconds for xarray without Dask in case 4, where this run took 2.37.
+than the exact seconds. This run was on a slower connection than the day
+before: xarray took 13 seconds to open MUR SST, against 5.8.
 
 ## One selection
 
@@ -32,19 +32,19 @@ Median time in seconds, from opening the store to the values in memory:
 
 | Case | ZarrExtract | xarray without Dask | xarray with Dask | Faster by |
 | --- | ---: | ---: | ---: | ---: |
-| 1. MUR SST, one point | 0.98 | 6.43 | 7.10 | 6.5× |
-| 2. MUR SST, one point, June 2019 | 2.12 | 6.70 | 9.43 | 3.2× |
-| 3. MUR SST, box, one day (80,601 values) | 1.17 | 6.18 | 6.49 | 5.3× |
-| 4. CMIP6 MRI-ESM2-0, London, 1850 to 2014 | 2.39 | 2.37 | 4.19 | about the same |
-| 5. CMIP6 CESM2, London, 2014 (`noleap`) | 0.56 | 0.76 | 0.97 | 1.4× |
-| 6. CMIP6 MRI-ESM2-0, box across 0° E, July 2014 | 0.54 | 0.73 | 0.96 | 1.3× |
-| 7. IDR OME-Zarr image, one pixel, 79 time points | 3.35 | could not open | could not open | |
-| 8. MUR SST, box, June 2019 (2.4 million values) | 2.70 | 8.25 | 9.99 | 3.1× |
+| 1. MUR SST, one point | 1.45 | 14.0 | 15.0 | 9.7× |
+| 2. MUR SST, one point, June 2019 | 2.01 | 14.3 | 19.2 | 7.1× |
+| 3. MUR SST, box, one day (80,601 values) | 1.95 | 14.3 | 14.7 | 7.3× |
+| 4. CMIP6 MRI-ESM2-0, London, 1850 to 2014 | 7.54 | 8.18 | 13.9 | about the same |
+| 5. CMIP6 CESM2, London, 2014 (`noleap`) | 2.11 | 2.68 | 2.42 | 1.1× |
+| 6. CMIP6 MRI-ESM2-0, box across 0° E, July 2014 | 1.16 | 2.13 | 1.99 | 1.7× |
+| 7. IDR OME-Zarr image, one pixel, 79 time points | 2.23 | could not open | could not open | |
+| 8. MUR SST, box, June 2019 (2.4 million values) | 3.17 | 15.5 | 23.2 | 4.9× |
 
 "Faster by" compares ZarrExtract with the faster of the two xarray
 contenders. Where the two times are within 10% of each other (case 4), it
-says "about the same". Converting xarray's result to a table (`to_dataframe()`)
-changed its times by less than 10%.
+says "about the same". Converting xarray's result to a table
+(`to_dataframe()`) changed most of its times by less than 10%.
 
 ## Repeated selections on one open store
 
@@ -55,53 +55,50 @@ one degree. Median times in seconds:
 
 | Case | ZarrExtract open | ZarrExtract per further selection | xarray open | xarray per further selection |
 | --- | ---: | ---: | ---: | ---: |
-| 1. MUR SST, one point | 0.05 | 0.34 | 5.74 | 0.34 |
-| 2. MUR SST, one point, a month | 0.05 | 1.38 | 5.77 | 1.01 |
-| 3. MUR SST, box, one day | 0.05 | 0.56 | 5.87 | 0.57 |
-| 4. CMIP6 MRI-ESM2-0, one point, 1850 to 2014 | 0.06 | 2.74 | 0.36 | 2.73 |
-| 5. CMIP6 CESM2, one point, 2014 | 0.05 | 1.02 | 0.35 | 0.95 |
-| 6. CMIP6 MRI-ESM2-0, box, a month | 0.05 | 0.55 | 0.34 | 0.60 |
-| 7. IDR OME-Zarr image, one pixel, 79 time points | 0.14 | 2.94 | could not open | |
-| 8. MUR SST, box, a month (2.4 million values) | 0.05 | 2.85 | 5.94 | 1.96 |
+| 1. MUR SST, one point | 0.11 | 0.64 | 13.3 | 1.18 |
+| 2. MUR SST, one point, a month | 0.11 | 1.89 | 13.1 | 1.37 |
+| 3. MUR SST, box, one day | 0.10 | 0.93 | 12.9 | 1.29 |
+| 4. CMIP6 MRI-ESM2-0, one point, 1850 to 2014 | 0.11 | 4.61 | 0.78 | 4.95 |
+| 5. CMIP6 CESM2, one point, 2014 | 0.11 | 0.81 | 0.80 | 0.75 |
+| 6. CMIP6 MRI-ESM2-0, box, a month | 0.10 | 1.30 | 0.78 | 1.05 |
+| 7. IDR OME-Zarr image, one pixel, 79 time points | 0.09 | 1.57 | could not open | |
+| 8. MUR SST, box, a month (2.4 million values) | 0.10 | 4.72 | 13.0 | 2.67 |
 
-The first selection on an open store took 0.37 to 2.97 seconds in xarray
-and 0.87 to 4.36 seconds in ZarrExtract; the notebook has them all.
+The first selection on an open store took 0.71 to 5.09 seconds in xarray
+and 1.28 to 6.35 seconds in ZarrExtract; the notebook has them all.
 
 ## What the numbers mean
 
+- **This run was on a slow connection.** xarray took about 13 seconds to
+  open MUR SST, where it took 5.8 in a run the day before. Both libraries
+  were timed in the same session, in rotating order, so compare the
+  ratios rather than the seconds.
 - **Long, finely chunked coordinates are where ZarrExtract gains most.**
-  MUR SST stores its 6,443 days in chunks of 5, so xarray spends about
-  5.8 seconds opening the store, reading every coordinate to build its
-  indexes. ZarrExtract opens the store in about 0.05 seconds and finds the
-  dates it needs by bisection, reading a few chunks instead of all of
-  them.
+  MUR SST stores its 6,443 days in chunks of 5, so xarray spends most of
+  its time opening the store, reading every coordinate to build its
+  indexes. ZarrExtract opens the store in about 0.1 seconds, and finds the
+  dates it needs by a search that guesses from the values it already
+  knows: about 3 rounds of reads the first time, and 2 on an open store.
 - **With short coordinates, the gap is small.** The CMIP6 stores open in
-  about 0.35 seconds in xarray, and ZarrExtract was as fast or up to 1.4
-  times faster.
-- **On an open store, the two libraries are about even.** With `zx.open()`,
-  a further point or box selection took the same time as in an xarray
-  dataset that is already open (cases 1, 3, 4, 5 and 6). Opening MUR SST
-  costs xarray about 5.7 seconds more, so ZarrExtract stays ahead for
-  several selections, about 15 in case 2 and 6 in case 8 at these rates.
-- **xarray is faster for further time ranges on MUR SST and for large
-  reads.** In case 2 a further month took 1.38 seconds in ZarrExtract
-  against 1.01 in xarray, and in case 8 2.85 against 1.96. xarray keeps
-  the whole time index in memory once it is open, while ZarrExtract
-  searches for each new date by bisection and reads the chunks it hasn't
-  seen, and until a later fix it also read again the time-coordinate
-  chunks it had already fetched. Building the table with one row per
-  value is not the cause: measured offline, it takes about 20 ms for 2.4
-  million values. The rest is within the network variation of case 8.
-- **Case 8 mostly measures S3 bandwidth.** In case 8, the first selection
-  on an open ZarrExtract store took 4.36 seconds, more than a whole
-  `zx.extract()` call (2.70). Measured with request counting, the first
-  selection on a handle and a whole `zx.extract()` made the same reads (14
-  data chunks, 329 MB), while the same work took 4.2 to 15.1 seconds from
-  one round to the next, so the difference was network variation. Case 8
-  downloads about 330 MB of compressed chunks for 2.4 million values (about
-  5 MB), so for any library it mostly measures S3 bandwidth.
+  under a second in xarray, and ZarrExtract was about as fast (case 4) or
+  up to 1.7 times faster.
+- **On an open store, the two libraries are close.** With `zx.open()`, a
+  further point or box took about the same time as in an xarray dataset
+  that is already open, or less (cases 1, 3, 4 and 5). In case 6 xarray
+  was faster, 1.05 seconds against 1.30. Opening MUR SST
+  costs xarray about 13 seconds here, so ZarrExtract stays ahead for many
+  selections.
+- **xarray is still faster for further time ranges on MUR SST and for the
+  large read.** A further month took 1.89 seconds in ZarrExtract against
+  1.37 in xarray (case 2), and 4.72 against 2.67 for 2.4 million values
+  (case 8). The search now needs only 2 rounds of coordinate reads for
+  each, so the difference lies elsewhere, most likely in how the data
+  chunks are fetched. It hasn't been measured yet. Each MUR chunk holds
+  5 × 1,799 × 3,600 values, so a month at one point already means
+  downloading 7 chunks of about 23 MB, and case 8 about 330 MB: these
+  cases mostly measure S3 bandwidth.
 - **Dask adds overhead to small reads.** xarray was slower with Dask than
-  without it in every case here.
+  without it in most cases here.
 - **Longitude across the seam.** For London (longitude -0.1) on stores
   that run from 0 to 360, xarray's `method="nearest"` picked 358.9° or
   358.8°, about 1° away, because it doesn't wrap around. ZarrExtract
